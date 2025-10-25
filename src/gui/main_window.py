@@ -426,7 +426,7 @@ class MainWindow:
                     
                     for name, status, color in modules:
                         with dpg.group(horizontal=True):
-                            dpg.add_text(f"{name}:", width=150)
+                            dpg.add_text(f"{name}:")
                             dpg.add_text(status, color=color)
                     
                     dpg.add_separator()
