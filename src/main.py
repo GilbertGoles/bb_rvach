@@ -119,12 +119,7 @@ class RapidRecon:
             
             # Инициализация движка с callback для обновления GUI и config_manager
             engine_config = self.config['engine']
-            self.engine = PropagationEngine(
-                max_depth=engine_config['max_depth'],
-                max_concurrent_tasks=engine_config['max_concurrent_tasks'],
-                rate_limit=engine_config['rate_limit'],
-                update_callback=self.on_engine_update,
-            )
+            self.engine = PropagationEngine(update_callback=self.on_engine_update)
             
             # Регистрация модулей
             self.register_modules()
