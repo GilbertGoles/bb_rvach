@@ -340,6 +340,8 @@ class MainWindow:
         self.logger = logging.getLogger('RapidRecon.GUI')
         self.settings_window_open = False
         self.selected_targets = set()
+        self.last_update_time = 0
+        self.update_interval = 2.0  # Обновление каждые 2 секунды
         
         self.logger.info("🎨 Инициализация графического интерфейса...")
         
@@ -1029,7 +1031,7 @@ class MainWindow:
                     dpg.show_item("adv_stop_button")
                     self.add_to_log("✅ Scan started successfully!")
                     
-                    # Обновляем интерфейс в реальном времени
+                    # Запускаем обновления интерфейса
                     self._start_ui_updates()
                 else:
                     self.add_to_log("❌ Failed to start scan!")
@@ -1124,6 +1126,18 @@ class MainWindow:
                 self.engine.clear_results()
             self.graph.clear()
             dpg.set_value("activity_log", "")
+            # Сбрасываем статистику
+            dpg.set_value("stat_nodes", "Nodes: 0")
+            dpg.set_value("stat_services", "Services: 0")
+            dpg.set_value("stat_targets", "Targets: 0")
+            dpg.set_value("stat_vulns", "Vulnerabilities: 0")
+            dpg.set_value("stat_exploits", "Exploits: 0")
+            dpg.set_value("stat_lateral", "Lateral Moves: 0")
+            
+            # Очищаем списки целей
+            dpg.configure_item("discovered_targets_list", items=[])
+            dpg.configure_item("exploit_targets", items=[])
+            
             self.add_to_log("🧹 All results cleared")
         except Exception as e:
             self.logger.error(f"Error clearing results: {e}")
@@ -1149,11 +1163,9 @@ class MainWindow:
             # Принудительная перерисовка
             dpg.delete_item("graph_canvas", children_only=True)
             self.graph.draw_graph(1000, 600)
-            self.add_to_log("🗺️ Graph updated")
             
         except Exception as e:
             self.logger.error(f"Error updating graph: {e}")
-            self.add_to_log(f"❌ Error updating graph: {e}")
     
     def clear_graph(self):
         """Очистка графа"""
@@ -1281,9 +1293,72 @@ class MainWindow:
             self.logger.error(f"Error adding to log: {e}")
     
     def _start_ui_updates(self):
-        """Запуск обновлений интерфейса"""
-        # Заглушка для будущей реализации
-        pass
+        """Запуск периодических обновлений интерфейса"""
+        def update_ui():
+            current_time = time.time()
+            if current_time - self.last_update_time >= self.update_interval:
+                self.last_update_time = current_time
+                
+                if self.is_scanning:
+                    try:
+                        # Обновляем статистику
+                        stats = self.engine.get_statistics() if hasattr(self.engine, 'get_statistics') else {}
+                        
+                        # Обновляем счетчики в боковой панели
+                        if 'nodes_discovered' in stats:
+                            dpg.set_value("stat_nodes", f"Nodes: {stats['nodes_discovered']}")
+                        if 'services_found' in stats:
+                            dpg.set_value("stat_services", f"Services: {stats['services_found']}")
+                        if 'active_targets' in stats:
+                            dpg.set_value("stat_targets", f"Targets: {stats['active_targets']}")
+                        if 'vulnerabilities_found' in stats:
+                            dpg.set_value("stat_vulns", f"Vulnerabilities: {stats['vulnerabilities_found']}")
+                        if 'exploits_successful' in stats:
+                            dpg.set_value("stat_exploits", f"Exploits: {stats['exploits_successful']}")
+                        if 'lateral_movements' in stats:
+                            dpg.set_value("stat_lateral", f"Lateral Moves: {stats['lateral_movements']}")
+                        
+                        # Обновляем граф
+                        self.update_graph()
+                        
+                        # Обновляем список целей
+                        self._update_targets_list()
+                        
+                    except Exception as e:
+                        self.logger.error(f"Error in UI update: {e}")
+        
+        # Устанавливаем callback для обновлений
+        dpg.set_render_callback(update_ui)
+    
+    def _update_targets_list(self):
+        """Обновление списка обнаруженных целей"""
+        try:
+            targets = []
+            
+            # Пробуем разные способы получить цели из движка
+            if hasattr(self.engine, 'discovered_nodes') and self.engine.discovered_nodes:
+                for node_id, node in self.engine.discovered_nodes.items():
+                    target_info = f"{node.get('data', 'Unknown')} - {node.get('type', 'unknown')}"
+                    targets.append(target_info)
+                    
+            elif hasattr(self.engine, 'get_scan_results'):
+                scan_data = self.engine.get_scan_results()
+                for node in scan_data.get('nodes', []):
+                    target_info = f"{node.get('data', 'Unknown')} - {node.get('type', 'unknown')}"
+                    targets.append(target_info)
+                    
+            elif hasattr(self.engine, 'active_targets') and self.engine.active_targets:
+                for target in self.engine.active_targets:
+                    targets.append(f"{target} - active")
+            
+            # Обновляем список в окне выбора целей
+            dpg.configure_item("discovered_targets_list", items=targets)
+            
+            # Обновляем список для эксплуатации
+            dpg.configure_item("exploit_targets", items=targets)
+            
+        except Exception as e:
+            self.logger.error(f"Error updating targets list: {e}")
     
     def handle_engine_event(self, event_type: str, data: Any = None):
         """Обработка событий от движка"""
@@ -1292,7 +1367,20 @@ class MainWindow:
             
             if event_type == 'node_discovered':
                 self.add_to_log(f"🔍 Node discovered: {data}")
+                self._update_targets_list()
                 self.update_graph()
+                
+                # Обновляем счетчик узлов
+                current_nodes = int(dpg.get_value("stat_nodes").split(": ")[1])
+                dpg.set_value("stat_nodes", f"Nodes: {current_nodes + 1}")
+                
+            elif event_type == 'service_found':
+                self.add_to_log(f"⚙️ Service found: {data}")
+                
+                # Обновляем счетчик сервисов
+                current_services = int(dpg.get_value("stat_services").split(": ")[1])
+                dpg.set_value("stat_services", f"Services: {current_services + 1}")
+                
             elif event_type == 'scan_completed':
                 self.add_to_log("✅ Scan completed")
                 self.is_scanning = False
@@ -1300,10 +1388,27 @@ class MainWindow:
                 dpg.hide_item("quick_stop_button")
                 dpg.show_item("adv_scan_button")
                 dpg.hide_item("adv_stop_button")
+                
             elif event_type == 'vulnerability_found':
                 self.add_to_log(f"🔴 Vulnerability found: {data}")
+                
+                # Обновляем счетчик уязвимостей
+                current_vulns = int(dpg.get_value("stat_vulns").split(": ")[1])
+                dpg.set_value("stat_vulns", f"Vulnerabilities: {current_vulns + 1}")
+                
             elif event_type == 'exploitation_success':
                 self.add_to_log(f"💥 Exploitation successful: {data}")
+                
+                # Обновляем счетчик успешных атак
+                current_exploits = int(dpg.get_value("stat_exploits").split(": ")[1])
+                dpg.set_value("stat_exploits", f"Exploits: {current_exploits + 1}")
+                
+            elif event_type == 'lateral_movement':
+                self.add_to_log(f"🔄 Lateral movement: {data}")
+                
+                # Обновляем счетчик перемещений
+                current_lateral = int(dpg.get_value("stat_lateral").split(": ")[1])
+                dpg.set_value("stat_lateral", f"Lateral Moves: {current_lateral + 1}")
                 
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
@@ -1318,7 +1423,6 @@ class MainWindow:
             
             # Главный цикл GUI
             while dpg.is_dearpygui_running():
-                # Здесь можно добавить периодические обновления
                 dpg.render_dearpygui_frame()
             
             self.destroy()
