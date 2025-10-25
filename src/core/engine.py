@@ -1,5 +1,5 @@
 """
-Ядро RapidRecon - движок распространения сканирования
+Ядро RapidRecon - движок распространения сканирования с поддержкой эксплуатации и lateral movement
 """
 import asyncio
 import json
@@ -23,6 +23,9 @@ class NodeType(Enum):
     OPEN_PORTS = "open_ports"
     DOMAIN_SCAN = "domain_scan"
     VULNERABILITY_SCAN = "vulnerability_scan"
+    EXPLOITATION = "exploitation"
+    EXPLOITATION_SUCCESS = "exploitation_success"
+    INTERNAL_SCAN = "internal_scan"
     CUSTOM = "custom"
 
 @dataclass
@@ -39,6 +42,8 @@ class ScanNode:
     ports: List[int] = None
     services: List[Dict] = None
     vulnerability_data: Dict = None
+    vulnerabilities: List[Dict] = None
+    exploit_data: Dict = None
     
     def __post_init__(self):
         if self.metadata is None:
@@ -49,9 +54,13 @@ class ScanNode:
             self.services = []
         if self.vulnerability_data is None:
             self.vulnerability_data = {}
+        if self.vulnerabilities is None:
+            self.vulnerabilities = []
+        if self.exploit_data is None:
+            self.exploit_data = {}
 
 class PropagationEngine:
-    """Движок авто-распространения сканирования"""
+    """Движок авто-распространения сканирования с поддержкой эксплуатации"""
     
     def __init__(self, max_depth: int = 10, max_concurrent_tasks: int = 5, rate_limit: int = 10, update_callback: Optional[Callable] = None):
         self.discovered_nodes: List[ScanNode] = []
@@ -71,7 +80,10 @@ class PropagationEngine:
             'failed_scans': 0,
             'nodes_discovered': 0,
             'modules_executed': 0,
-            'vulnerabilities_found': 0
+            'vulnerabilities_found': 0,
+            'exploits_attempted': 0,
+            'exploits_successful': 0,
+            'lateral_movements': 0
         }
         
         # Настройка логирования
@@ -144,7 +156,8 @@ class PropagationEngine:
     
     def add_custom_node(self, node_type: NodeType, data: Any, source: str, depth: int, 
                        module: str = "default", metadata: Dict = None, ports: List[int] = None,
-                       services: List[Dict] = None, vulnerability_data: Dict = None):
+                       services: List[Dict] = None, vulnerability_data: Dict = None,
+                       vulnerabilities: List[Dict] = None, exploit_data: Dict = None):
         """Добавить кастомный узел для сканирования"""
         node = ScanNode(
             node_id=f"{node_type.value}_{hash(str(data))}_{int(time.time())}",
@@ -157,7 +170,9 @@ class PropagationEngine:
             metadata=metadata or {},
             ports=ports or [],
             services=services or [],
-            vulnerability_data=vulnerability_data or {}
+            vulnerability_data=vulnerability_data or {},
+            vulnerabilities=vulnerabilities or [],
+            exploit_data=exploit_data or {}
         )
         self.discovered_nodes.append(node)
         self.pending_scans.put(node)
@@ -222,7 +237,8 @@ class PropagationEngine:
                 'pending_tasks': self.pending_scans.qsize(),
                 'completed_tasks': len(self.completed_scans),
                 'discovered_nodes': len(self.discovered_nodes),
-                'vulnerabilities_found': self.stats['vulnerabilities_found']
+                'vulnerabilities_found': self.stats['vulnerabilities_found'],
+                'exploits_successful': self.stats['exploits_successful']
             })
         
         self.logger.info("Обработка очереди завершена")
@@ -310,6 +326,9 @@ class PropagationEngine:
             if task.services:
                 # Для vulnerability_scanner передаем информацию о сервисах
                 scan_data = [task.data, task.services]
+            elif task.vulnerabilities:
+                # Для exploitation модуля передаем уязвимости
+                scan_data = [task.data, task.vulnerabilities]
             
             results = await module.scan(scan_data)
             await self.process_module_results(results, task)
@@ -428,7 +447,9 @@ class PropagationEngine:
         
         # Обработка результатов vulnerability_scanner
         elif results.get("module") == "vulnerability_scanner" and results.get("vulnerabilities"):
-            for vuln in results["vulnerabilities"]:
+            vulnerabilities = results["vulnerabilities"]
+            
+            for vuln in vulnerabilities:
                 self.stats['vulnerabilities_found'] += 1
                 
                 vulnerability_node = ScanNode(
@@ -454,6 +475,93 @@ class PropagationEngine:
                     f"(Severity: {vuln.get('severity', 'unknown')}) "
                     f"на {source_task.data}"
                 )
+            
+            # ОБРАБОТКА ЭКСПЛУАТАЦИИ - запускаем эксплуатацию для эксплуатируемых уязвимостей
+            exploitable_vulns = [
+                vuln for vuln in vulnerabilities
+                if vuln.get('exploit_available', False) or 
+                   vuln.get('type') in ['anonymous_ftp', 'exposed_endpoint', 'weak_password']
+            ]
+            
+            if exploitable_vulns:
+                self.stats['exploits_attempted'] += len(exploitable_vulns)
+                
+                exploitation_node = ScanNode(
+                    node_id=f"exploitation_{source_task.data}_{int(time.time())}",
+                    type=NodeType.EXPLOITATION,
+                    data=f"Exploit {len(exploitable_vulns)} vulns on {source_task.data}",
+                    source=source_task.node_id,
+                    depth=source_task.depth + 1,
+                    timestamp=time.time(),
+                    module='exploitation',
+                    metadata={
+                        'target': source_task.data,
+                        'vulnerability_count': len(exploitable_vulns),
+                        'vulnerability_types': [vuln.get('type') for vuln in exploitable_vulns]
+                    },
+                    vulnerabilities=exploitable_vulns
+                )
+                await self.add_discovered_node(exploitation_node)
+                
+                self.logger.info(f"🚀 Запуск эксплуатации {len(exploitable_vulns)} уязвимостей на {source_task.data}")
+        
+        # Обработка результатов эксплуатации
+        elif (results.get("module") == "exploitation" and 
+              results.get("exploitation_results")):
+            
+            for exploit_result in results["exploitation_results"]:
+                if exploit_result.get("success"):
+                    self.stats['exploits_successful'] += 1
+                    
+                    exploit_node = ScanNode(
+                        node_id=f"exploit_success_{source_task.data}_{int(time.time())}",
+                        type=NodeType.EXPLOITATION_SUCCESS,
+                        data=f"{exploit_result['access_type']} доступ - Успех",
+                        source=source_task.node_id,
+                        depth=source_task.depth + 1,
+                        timestamp=time.time(),
+                        module='report_generator',
+                        metadata={
+                            'severity': 'critical',
+                            'access_type': exploit_result.get('access_type'),
+                            'credentials_obtained': bool(exploit_result.get('credentials')),
+                            'shell_obtained': exploit_result.get('shell_obtained', False)
+                        },
+                        exploit_data=exploit_result
+                    )
+                    await self.add_discovered_node(exploit_node)
+                    
+                    self.logger.critical(
+                        f"💥 УСПЕШНАЯ ЭКСПЛУАТАЦИЯ: {exploit_result.get('access_type')} "
+                        f"доступ к {source_task.data}"
+                    )
+                    
+                    # Если получили доступ к системе - запускаем внутреннее сканирование
+                    if exploit_result.get("access_type") in ["ssh_access", "shell_access", "remote_code_execution"]:
+                        await self.start_lateral_movement(exploit_result, source_task)
+        
+        # Обработка результатов internal_scanner (lateral movement)
+        elif results.get("module") == "internal_scanner" and results.get("internal_hosts"):
+            self.stats['lateral_movements'] += 1
+            
+            for host_info in results["internal_hosts"]:
+                # Создаем узлы для внутренних хостов
+                internal_node = ScanNode(
+                    node_id=f"internal_host_{host_info['ip']}_{int(time.time())}",
+                    type=NodeType.ACTIVE_HOST,
+                    data=host_info["ip"],
+                    source=source_task.node_id,
+                    depth=source_task.depth + 1,
+                    timestamp=time.time(),
+                    module='port_scanner',
+                    metadata={
+                        'host_status': 'active',
+                        'internal_network': True,
+                        'source_exploit': source_task.exploit_data.get('access_type'),
+                        'lateral_movement': True
+                    }
+                )
+                await self.add_discovered_node(internal_node)
         
         # Обработка общих результатов для других модулей
         else:
@@ -466,6 +574,31 @@ class PropagationEngine:
             'results': results
         })
     
+    async def start_lateral_movement(self, exploit_result: Dict, source_task: ScanNode):
+        """Начать перемещение внутри сети после успешной эксплуатации"""
+        self.logger.info(f"🚀 Начинаем lateral movement с {source_task.data}")
+        
+        if exploit_result.get("access_type") in ["ssh_access", "shell_access", "remote_code_execution"]:
+            # Получаем информацию о сети изнутри
+            internal_scan_node = ScanNode(
+                node_id=f"internal_scan_{source_task.data}_{int(time.time())}",
+                type=NodeType.INTERNAL_SCAN,
+                data=f"Internal scan from {exploit_result.get('credentials', {}).get('username', 'unknown')}@{source_task.data}",
+                source=source_task.node_id,
+                depth=source_task.depth + 1,
+                timestamp=time.time(),
+                module='internal_scanner',
+                metadata={
+                    'access_type': exploit_result.get('access_type'),
+                    'credentials_available': bool(exploit_result.get('credentials')),
+                    'lateral_movement': True
+                },
+                exploit_data=exploit_result
+            )
+            await self.add_discovered_node(internal_scan_node)
+            
+            self.logger.info(f"🔍 Запуск внутреннего сканирования с компрометированной системы {source_task.data}")
+
     async def add_discovered_node(self, node: ScanNode):
         """Добавление обнаруженного узла в систему"""
         if node.depth <= self.max_depth:
@@ -500,7 +633,7 @@ class PropagationEngine:
         module_name = task.module if task.module != "default" else None
         
         if not module_name:
-            # Базовая логика выбора модуля по типу узла
+            # Расширенная логика выбора модуля по типу узла
             module_map = {
                 NodeType.INITIAL_TARGET: 'ping_scanner',
                 NodeType.SUBDOMAIN: 'ping_scanner',
@@ -510,7 +643,10 @@ class PropagationEngine:
                 NodeType.OPEN_PORTS: 'service_detector',
                 NodeType.SERVICE: 'vulnerability_scanner',
                 NodeType.VULNERABILITY_SCAN: 'vulnerability_scanner',
-                NodeType.VULNERABILITY: 'report_generator'
+                NodeType.VULNERABILITY: 'report_generator',
+                NodeType.EXPLOITATION: 'exploitation',
+                NodeType.EXPLOITATION_SUCCESS: 'report_generator',
+                NodeType.INTERNAL_SCAN: 'internal_scanner'
             }
             module_name = module_map.get(task.type)
         
@@ -587,7 +723,8 @@ class PropagationEngine:
                     'description': 'Weak SSH password detected',
                     'severity': 'high',
                     'confidence': 0.9,
-                    'cvss_score': 7.5
+                    'cvss_score': 7.5,
+                    'exploit_available': True
                 },
                 {
                     'type': 'outdated_software',
@@ -595,7 +732,8 @@ class PropagationEngine:
                     'description': 'Outdated Apache version',
                     'severity': 'medium',
                     'confidence': 0.8,
-                    'cvss_score': 5.5
+                    'cvss_score': 5.5,
+                    'exploit_available': False
                 }
             ]
             return [
@@ -615,6 +753,36 @@ class PropagationEngine:
                     },
                     vulnerability_data=vuln
                 ) for vuln in vulnerabilities
+            ]
+        elif task.type == NodeType.EXPLOITATION:
+            # Симуляция успешной эксплуатации
+            exploit_results = [
+                {
+                    'success': True,
+                    'access_type': 'ssh_access',
+                    'credentials': {'username': 'admin', 'password': 'admin123'},
+                    'shell_obtained': True,
+                    'internal_network_access': True
+                }
+            ]
+            return [
+                ScanNode(
+                    node_id=f"exploit_success_{task.data}_{int(time.time())}",
+                    type=NodeType.EXPLOITATION_SUCCESS,
+                    data=f"SSH доступ - Успех",
+                    source=task.node_id,
+                    depth=task.depth + 1,
+                    timestamp=time.time(),
+                    module='report_generator',
+                    metadata={
+                        'severity': 'critical',
+                        'access_type': 'ssh_access',
+                        'credentials_obtained': True,
+                        'shell_obtained': True,
+                        'simulated': True
+                    },
+                    exploit_data=exploit_results[0]
+                )
             ]
         return []
     
@@ -647,7 +815,9 @@ class PropagationEngine:
                     'metadata': node.metadata,
                     'ports': node.ports,
                     'services': node.services,
-                    'vulnerability_data': node.vulnerability_data
+                    'vulnerability_data': node.vulnerability_data,
+                    'vulnerabilities': node.vulnerabilities,
+                    'exploit_data': node.exploit_data
                 } for node in self.discovered_nodes
             ],
             'completed_scans': self.completed_scans
@@ -676,9 +846,9 @@ def gui_update_callback(event_type: str, data: Any = None):
 
 # Пример использования
 async def main():
-    """Демонстрация работы движка"""
+    """Демонстрация работы движка с поддержкой эксплуатации"""
     engine = PropagationEngine(
-        max_depth=3, 
+        max_depth=4, 
         max_concurrent_tasks=3, 
         rate_limit=10,
         update_callback=gui_update_callback
@@ -687,7 +857,6 @@ async def main():
     # Добавляем начальные цели разных типов
     engine.add_initial_target("example.com")  # Домен
     engine.add_initial_target("192.168.1.1")  # IP-адрес
-    engine.add_initial_target("8.8.8.8")      # Публичный IP
     
     # Запускаем обработку
     await engine.process_queue()
@@ -695,9 +864,3 @@ async def main():
     # Выводим статистику
     stats = engine.get_statistics()
     print(f"Статистика: {stats}")
-    
-    # Экспортируем результаты
-    engine.export_results("scan_results.json")
-
-if __name__ == "__main__":
-    asyncio.run(main())
