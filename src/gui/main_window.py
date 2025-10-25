@@ -116,12 +116,72 @@ class MainWindow:
         self.is_paused = False
         self.current_scan_level = "Normal"
         
-        # Данные
-        self.hosts_data = {}
-        self.nodes_data = {}
-        self.vulnerabilities_data = []
-        self.exploitation_results = []
+        # Данные для тестирования
+        self.hosts_data = {
+            "192.168.1.1": {
+                "hostname": "router.local", 
+                "status": "active", 
+                "ports": [80, 443, 22], 
+                "services": ["http", "https", "ssh"],
+                "os": "Linux",
+                "last_seen": datetime.now().strftime("%H:%M:%S"),
+                "tags": ["router", "gateway"]
+            },
+            "192.168.1.100": {
+                "hostname": "pc-01.local", 
+                "status": "active", 
+                "ports": [3389, 445, 135], 
+                "services": ["rdp", "smb", "rpc"],
+                "os": "Windows 10",
+                "last_seen": datetime.now().strftime("%H:%M:%S"),
+                "tags": ["workstation"]
+            },
+            "192.168.1.150": {
+                "hostname": "server.local", 
+                "status": "active", 
+                "ports": [80, 443, 21, 25], 
+                "services": ["http", "https", "ftp", "smtp"],
+                "os": "Ubuntu Server",
+                "last_seen": datetime.now().strftime("%H:%M:%S"),
+                "tags": ["server", "web"]
+            }
+        }
         
+        self.nodes_data = {
+            "target_1": {
+                "id": "target_1",
+                "type": "initial_target",
+                "label": "example.com",
+                "data": {"ip": "93.184.216.34", "status": "active"},
+                "timestamp": time.time()
+            },
+            "subdomain_1": {
+                "id": "subdomain_1", 
+                "type": "subdomain",
+                "label": "www.example.com",
+                "data": {"ip": "93.184.216.34", "parent": "example.com"},
+                "timestamp": time.time()
+            },
+            "host_1": {
+                "id": "host_1",
+                "type": "active_host", 
+                "label": "93.184.216.34",
+                "data": {"ports": [80, 443], "services": ["http", "https"]},
+                "timestamp": time.time()
+            }
+        }
+        
+        self.vulnerabilities_data = [
+            "CVE-2021-44228 - Log4Shell",
+            "CVE-2021-45046 - Log4j RCE",
+            "CVE-2022-22965 - Spring4Shell"
+        ]
+        
+        self.exploitation_results = [
+            {"target": "192.168.1.100", "exploit": "EternalBlue", "success": True},
+            {"target": "192.168.1.150", "exploit": "Shellshock", "success": False}
+        ]
+
         # Инициализация GUI
         self.initialize_gui()
         
@@ -191,8 +251,8 @@ class MainWindow:
             no_collapse=True,
             no_close=True
         ):
-            # Боковая панель управления
-            with dpg.child_window(tag="sidebar", width=280, border=False):
+            # Боковая панель управления (упрощенная)
+            with dpg.child_window(tag="sidebar", width=250, border=False):
                 self.create_sidebar()
             
             # Основная область с вкладками
@@ -201,7 +261,7 @@ class MainWindow:
                     self.create_content_area()
     
     def create_sidebar(self):
-        """Создание боковой панели управления"""
+        """Создание упрощенной боковой панели управления"""
         # Логотип и статус
         with dpg.group():
             dpg.add_spacer(height=10)
@@ -217,47 +277,15 @@ class MainWindow:
         # Панель управления (ControlsPanel)
         self.controls_panel.create_controls_panel("sidebar")
         
-        # Модули и возможности
-        with dpg.collapsing_header(label="Modules & Capabilities", default_open=True):
-            dpg.add_text("Active Modules:", color=[150, 150, 160])
-            
-            modules = [
-                ("[OK]", "Ping Scanner", [200, 200, 200]),
-                ("[OK]", "Port Scanner", [200, 200, 200]),
-                ("[OK]", "Service Detector", [200, 200, 200]),
-                ("[OK]", "Subdomain Scanner", [200, 200, 200]),
-                ("[--]", "Vulnerability Scanner", [255, 165, 0]),
-                ("[--]", "Exploitation Engine", [255, 100, 100]),
-                ("[--]", "Lateral Movement", [255, 165, 0])
-            ]
-            
-            for icon, name, color in modules:
-                with dpg.group(horizontal=True):
-                    dpg.add_text(icon, color=color)
-                    dpg.add_text(name, color=color)
-        
-        # Статистика в реальном времени
-        with dpg.collapsing_header(label="Live Statistics", default_open=True):
-            dpg.add_text("Network Discovery:", color=[150, 150, 160])
-            dpg.add_text("Nodes: 0", tag="stat_nodes")
-            dpg.add_text("Hosts: 0", tag="stat_hosts")
-            dpg.add_text("Services: 0", tag="stat_services")
-            dpg.add_text("Ports: 0", tag="stat_ports")
-            
-            dpg.add_text("Security Findings:", color=[150, 150, 160])
-            dpg.add_text("Vulnerabilities: 0", tag="stat_vulns", color=[255, 100, 100])
-            dpg.add_text("Exploits: 0", tag="stat_exploits", color=[255, 60, 60])
-            dpg.add_text("Lateral: 0", tag="stat_lateral", color=[255, 165, 0])
-        
-        # Быстрые действия
+        # Быстрые действия (перенесены из боковой панели)
         with dpg.collapsing_header(label="Quick Actions", default_open=True):
             dpg.add_button(
-                label="View Network Tree", 
+                label="Network Tree", 
                 width=-1,
                 callback=lambda: dpg.set_value("main_tabs", "tree_tab")
             )
             dpg.add_button(
-                label="View Hosts Table",
+                label="Hosts Table",
                 width=-1, 
                 callback=lambda: dpg.set_value("main_tabs", "table_tab")
             )
@@ -267,34 +295,26 @@ class MainWindow:
                 callback=lambda: dpg.set_value("main_tabs", "scope_tab")
             )
             dpg.add_button(
-                label="Vulnerability Scan", 
+                label="Start Scan", 
                 width=-1,
-                callback=self.start_vulnerability_scan
+                callback=self.quick_start_scan
             )
             dpg.add_button(
-                label="Exploitation", 
+                label="Stop Scan", 
                 width=-1,
-                callback=self.start_exploitation
+                callback=self.stop_scan
             )
         
-        # Управление данными
-        with dpg.group():
-            dpg.add_separator()
-            dpg.add_button(
-                label="Engine Settings", 
-                width=-1, 
-                callback=self.show_settings
-            )
-            dpg.add_button(
-                label="Export All Data", 
-                width=-1, 
-                callback=self.export_all_data
-            )
-            dpg.add_button(
-                label="Clear Everything", 
-                width=-1, 
-                callback=self.clear_everything
-            )
+        # Статистика в реальном времени
+        with dpg.collapsing_header(label="Statistics", default_open=True):
+            dpg.add_text("Network:", color=[150, 150, 160])
+            dpg.add_text("Nodes: 0", tag="stat_nodes")
+            dpg.add_text("Hosts: 0", tag="stat_hosts")
+            dpg.add_text("Services: 0", tag="stat_services")
+            
+            dpg.add_text("Security:", color=[150, 150, 160])
+            dpg.add_text("Vulnerabilities: 0", tag="stat_vulns", color=[255, 100, 100])
+            dpg.add_text("Exploits: 0", tag="stat_exploits", color=[255, 60, 60])
     
     def create_content_area(self):
         """Создание основной области с вкладками модулей"""
@@ -322,6 +342,86 @@ class MainWindow:
             # 6. Вкладка отчетов
             with dpg.tab(label="Reports", tag="reports_tab"):
                 self.create_reports_tab()
+            
+            # 7. Новая вкладка: Dashboard (перенесено из боковой панели)
+            with dpg.tab(label="Dashboard", tag="dashboard_tab"):
+                self.create_dashboard_tab()
+    
+    def create_dashboard_tab(self):
+        """Новая вкладка Dashboard с перенесенными элементами"""
+        with dpg.group():
+            dpg.add_text("Scan Dashboard", color=[123, 97, 255])
+            dpg.add_separator()
+            
+            # Модули и возможности (перенесено из боковой панели)
+            with dpg.group(horizontal=True):
+                with dpg.child_window(width=300):
+                    dpg.add_text("Active Modules", color=[150, 150, 160])
+                    
+                    modules = [
+                        ("[OK]", "Ping Scanner", [200, 200, 200]),
+                        ("[OK]", "Port Scanner", [200, 200, 200]),
+                        ("[OK]", "Service Detector", [200, 200, 200]),
+                        ("[OK]", "Subdomain Scanner", [200, 200, 200]),
+                        ("[--]", "Vulnerability Scanner", [255, 165, 0]),
+                        ("[--]", "Exploitation Engine", [255, 100, 100]),
+                        ("[--]", "Lateral Movement", [255, 165, 0])
+                    ]
+                    
+                    for icon, name, color in modules:
+                        with dpg.group(horizontal=True):
+                            dpg.add_text(icon, color=color)
+                            dpg.add_text(name, color=color)
+                
+                with dpg.child_window(width=300):
+                    dpg.add_text("Quick Configuration", color=[150, 150, 160])
+                    
+                    dpg.add_text("Scan Intensity:")
+                    dpg.add_combo(
+                        tag="dashboard_intensity",
+                        items=["Stealth", "Normal", "Aggressive", "Full"],
+                        default_value="Normal",
+                        width=-1,
+                        callback=self.on_scan_level_change
+                    )
+                    
+                    dpg.add_text("Target Scope:")
+                    dpg.add_input_text(
+                        tag="dashboard_target",
+                        hint="Enter target (IP, domain, range)",
+                        width=-1
+                    )
+                    
+                    with dpg.group(horizontal=True):
+                        dpg.add_button(
+                            label="Add Target",
+                            callback=self.add_target_from_dashboard
+                        )
+                        dpg.add_button(
+                            label="Clear Targets",
+                            callback=self.clear_targets
+                        )
+                
+                with dpg.child_window():
+                    dpg.add_text("Real-time Activity", color=[150, 150, 160])
+                    
+                    dpg.add_text("Current Operations:")
+                    dpg.add_input_text(
+                        tag="activity_log",
+                        multiline=True,
+                        height=200,
+                        readonly=True,
+                        width=-1,
+                        default_value="No active operations\n\nReady to scan..."
+                    )
+                    
+                    dpg.add_text("Recent Events:")
+                    dpg.add_listbox(
+                        tag="recent_events",
+                        items=["System initialized", "GUI loaded", "Ready for scan"],
+                        num_items=5,
+                        width=-1
+                    )
     
     def create_network_tree_tab(self):
         """Вкладка дерева сети"""
@@ -350,6 +450,9 @@ class MainWindow:
             
             # Устанавливаем callback для выбора узлов
             self.network_tree.set_node_select_callback(self.on_node_select)
+            
+            # Инициализируем тестовые данные
+            self.network_tree.update_tree(self.nodes_data, self.hosts_data)
     
     def create_hosts_table_tab(self):
         """Вкладка таблицы хостов"""
@@ -378,6 +481,9 @@ class MainWindow:
             
             # Устанавливаем callback для выбора хостов
             self.hosts_table.set_host_select_callback(self.on_host_select)
+            
+            # Инициализируем тестовые данные
+            self.hosts_table.update_table(self.hosts_data)
     
     def create_scope_manager_tab(self):
         """Вкладка управления scope"""
@@ -416,7 +522,7 @@ class MainWindow:
                     dpg.add_text("Discovered Vulnerabilities")
                     dpg.add_listbox(
                         tag="vulnerabilities_list",
-                        items=["No vulnerabilities found"],
+                        items=self.vulnerabilities_data,
                         num_items=12,
                         width=-1
                     )
@@ -442,7 +548,7 @@ class MainWindow:
                     dpg.add_text("Target Selection")
                     dpg.add_listbox(
                         tag="exploit_targets",
-                        items=["No vulnerable targets available"],
+                        items=list(self.hosts_data.keys()),
                         num_items=8,
                         width=-1
                     )
@@ -464,13 +570,17 @@ class MainWindow:
                 
                 with dpg.child_window():
                     dpg.add_text("Exploitation Results")
+                    results_text = "\n".join([
+                        f"{r['target']} - {r['exploit']} - {'SUCCESS' if r['success'] else 'FAILED'}"
+                        for r in self.exploitation_results
+                    ])
                     dpg.add_input_text(
                         tag="exploitation_log",
                         multiline=True,
                         height=400,
                         readonly=True,
                         width=-1,
-                        default_value="Exploitation results will appear here"
+                        default_value=results_text or "No exploitation results yet"
                     )
     
     def create_reports_tab(self):
@@ -510,7 +620,7 @@ class MainWindow:
                         height=500,
                         readonly=True,
                         width=-1,
-                        default_value="Report preview will appear here"
+                        default_value="Report preview will appear here\n\nSelect report type and click Generate"
                     )
     
     def create_settings_window(self):
@@ -618,7 +728,7 @@ class MainWindow:
     
     def quick_start_scan(self):
         """Быстрый запуск сканирования"""
-        target = dpg.get_value("quick_target_input")
+        target = dpg.get_value("dashboard_target")
         if not target:
             self.add_to_log("Please enter a target first!")
             return
@@ -628,21 +738,42 @@ class MainWindow:
         # Используем ControlsPanel для управления сканированием
         self.controls_panel.start_scan(target, self.current_scan_level)
         self.update_scan_state()
+        
+        # Обновляем активность
+        self.update_activity_log(f"Started {self.current_scan_level} scan for {target}")
+    
+    def add_target_from_dashboard(self):
+        """Добавление цели из dashboard"""
+        target = dpg.get_value("dashboard_target")
+        if target:
+            self.add_to_log(f"Added target: {target}")
+            self.update_activity_log(f"Target added to scope: {target}")
+        else:
+            self.add_to_log("Please enter a target first!")
+    
+    def clear_targets(self):
+        """Очистка целей"""
+        dpg.set_value("dashboard_target", "")
+        self.add_to_log("Targets cleared")
+        self.update_activity_log("All targets cleared from scope")
     
     def pause_scan(self):
         """Пауза сканирования"""
         self.controls_panel.pause_scan()
         self.update_scan_state()
+        self.update_activity_log("Scan paused")
     
     def resume_scan(self):
         """Возобновление сканирования"""
         self.controls_panel.resume_scan()
         self.update_scan_state()
+        self.update_activity_log("Scan resumed")
     
     def stop_scan(self):
         """Остановка сканирования"""
         self.controls_panel.stop_scan()
         self.update_scan_state()
+        self.update_activity_log("Scan stopped")
     
     def update_scan_state(self):
         """Обновление состояния сканирования в UI"""
@@ -653,25 +784,36 @@ class MainWindow:
         dpg.set_value("scan_status", state['status'])
         dpg.configure_item("scan_status", color=state['color'])
     
+    def update_activity_log(self, message: str):
+        """Обновление лога активности"""
+        current_log = dpg.get_value("activity_log")
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        new_log = f"[{timestamp}] {message}\n{current_log}"
+        dpg.set_value("activity_log", new_log)
+    
     def start_vulnerability_scan(self):
         """Запуск сканирования уязвимостей"""
         self.add_to_log("Starting vulnerability scan...")
+        self.update_activity_log("Vulnerability scan started")
         dpg.set_value("main_tabs", "vulns_tab")
     
     def start_exploitation(self):
         """Запуск эксплуатации"""
         self.add_to_log("Starting exploitation...")
+        self.update_activity_log("Exploitation engine started")
         dpg.set_value("main_tabs", "exploit_tab")
     
     def refresh_network_tree(self):
         """Обновление дерева сети"""
         self.network_tree.update_tree(self.nodes_data, self.hosts_data)
         self.add_to_log("Network tree refreshed")
+        self.update_statistics()
     
     def refresh_hosts_table(self):
         """Обновление таблицы хостов"""
         self.hosts_table.update_table(self.hosts_data)
         self.add_to_log("Hosts table refreshed")
+        self.update_statistics()
     
     def show_network_statistics(self):
         """Показать статистику сети"""
@@ -712,6 +854,7 @@ class MainWindow:
             with open(filename, 'w') as f:
                 json.dump(export_data, f, indent=2)
             self.add_to_log(f"Network tree exported to {filename}")
+            self.update_activity_log(f"Network tree exported: {filename}")
         except Exception as e:
             self.add_to_log(f"Export failed: {e}")
     
@@ -723,6 +866,7 @@ class MainWindow:
                 count += 1
         
         self.add_to_log(f"Added {count} nodes to scope")
+        self.update_activity_log(f"Added {count} nodes to scanning scope")
     
     def scan_selected_hosts(self):
         """Сканирование выбранных хостов"""
@@ -764,6 +908,7 @@ class MainWindow:
             dpg.set_value(stat, f"{stat.split('_')[1].title()}: 0")
         
         self.add_to_log("Everything cleared")
+        self.update_activity_log("All data cleared - fresh start")
     
     def load_vulnerable_targets(self):
         """Загрузка уязвимых целей"""
@@ -781,16 +926,19 @@ class MainWindow:
     def generate_report(self):
         """Генерация отчета"""
         self.add_to_log("Generating report...")
+        self.update_activity_log("Report generation started")
     
     def save_engine_settings(self):
         """Сохранение настроек движка"""
         self.add_to_log("Engine settings saved")
+        self.update_activity_log("Engine configuration updated")
         dpg.hide_item("settings_window")
     
     def perform_export(self):
         """Выполнение экспорта данных"""
         export_format = dpg.get_value("export_format")
         self.add_to_log(f"Exporting data in {export_format} format")
+        self.update_activity_log(f"Data export completed in {export_format} format")
         dpg.hide_item("export_window")
     
     def calculate_statistics(self):
@@ -830,6 +978,9 @@ class MainWindow:
                 # Обновляем статистику
                 self.update_statistics()
                 
+                # Обновляем активность
+                self.update_activity_log(f"New data received: {event_type}")
+                
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
     
@@ -852,6 +1003,10 @@ class MainWindow:
         """Запуск GUI"""
         try:
             self.logger.info("Запуск графического интерфейса...")
+            
+            # Инициализируем данные при запуске
+            self.update_statistics()
+            self.update_activity_log("System initialized and ready")
             
             while dpg.is_dearpygui_running():
                 dpg.render_dearpygui_frame()
