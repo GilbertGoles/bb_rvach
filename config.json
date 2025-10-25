@@ -1,0 +1,31 @@
+cat > config.json << 'EOF'
+{
+    "app": {
+        "version": "1.0.0",
+        "debug": true,
+        "update_interval": 0.5
+    },
+    "logging": {
+        "level": "INFO",
+        "file": "rapidrecon.log"
+    },
+    "engine": {
+        "max_depth": 5,
+        "max_concurrent_tasks": 5,
+        "rate_limit": 10
+    },
+    "modules": {
+        "directory": "src/modules",
+        "auto_discover": true,
+        "auto_load": true,
+        "builtin_modules": [
+            "ping_scanner",
+            "port_scanner", 
+            "service_detector",
+            "subdomain_scanner",
+            "vulnerability_scanner",
+            "exploitation"
+        ]
+    }
+}
+EOF
