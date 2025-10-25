@@ -147,6 +147,87 @@ class GraphView:
         
         return filename
 
+class ConfigManager:
+    """Менеджер конфигурации профилей сканирования"""
+    
+    def __init__(self, config_file: str = "scan_profiles.json"):
+        self.config_file = config_file
+        self.profiles = self.load_profiles()
+        self.active_profile = "normal"
+    
+    def load_profiles(self) -> Dict[str, Any]:
+        """Загрузка профилей из файла"""
+        default_profiles = {
+            "stealth": {
+                "rate_limit": 5,
+                "max_depth": 2,
+                "timeout": 3.0,
+                "max_concurrent_tasks": 2,
+                "description": "Медленное и скрытное сканирование"
+            },
+            "normal": {
+                "rate_limit": 10,
+                "max_depth": 3,
+                "timeout": 2.0,
+                "max_concurrent_tasks": 5,
+                "description": "Сбалансированное сканирование"
+            },
+            "aggressive": {
+                "rate_limit": 50,
+                "max_depth": 5,
+                "timeout": 1.0,
+                "max_concurrent_tasks": 10,
+                "description": "Быстрое и глубокое сканирование"
+            }
+        }
+        
+        try:
+            with open(self.config_file, 'r', encoding='utf-8') as f:
+                loaded_profiles = json.load(f)
+                # Обновляем дефолтные профили загруженными
+                default_profiles.update(loaded_profiles)
+        except FileNotFoundError:
+            # Создаем файл с дефолтными профилями
+            self.save_profiles(default_profiles)
+        
+        return default_profiles
+    
+    def save_profiles(self, profiles: Dict[str, Any] = None):
+        """Сохранение профилей в файл"""
+        if profiles is None:
+            profiles = self.profiles
+        
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(profiles, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception as e:
+            print(f"Ошибка сохранения профилей: {e}")
+            return False
+    
+    def set_profile(self, profile_name: str) -> bool:
+        """Установка активного профиля"""
+        if profile_name in self.profiles:
+            self.active_profile = profile_name
+            return True
+        return False
+    
+    def get_active_config(self) -> Dict[str, Any]:
+        """Получение конфигурации активного профиля"""
+        return self.profiles.get(self.active_profile, {})
+    
+    def get_profile_description(self, profile_name: str) -> str:
+        """Получение описания профиля"""
+        profile = self.profiles.get(profile_name, {})
+        return profile.get('description', 'Нет описания')
+    
+    def update_profile(self, profile_name: str, config: Dict[str, Any]):
+        """Обновление профиля"""
+        if profile_name in self.profiles:
+            self.profiles[profile_name].update(config)
+            return True
+        return False
+
 class MainWindow:
     """
     Главный интерфейс RapidRecon с расширенным функционалом
@@ -156,6 +237,7 @@ class MainWindow:
         self.engine = engine
         self.module_manager = module_manager
         self.graph_view = GraphView()
+        self.config_manager = ConfigManager()
         self.is_scanning = False
         self.scan_stats = {}
         self.real_time_data = []
@@ -239,6 +321,23 @@ class MainWindow:
                 dpg.add_text("Статус:", tag="status_text")
                 dpg.add_text("Ожидание", tag="current_status")
             
+            # Выбор профиля сканирования
+            with dpg.group(horizontal=True):
+                dpg.add_text("Профиль:")
+                dpg.add_combo(
+                    items=list(self.config_manager.profiles.keys()),
+                    default_value=self.config_manager.active_profile,
+                    tag="scan_profile",
+                    callback=self.on_profile_change,
+                    width=120
+                )
+                dpg.add_button(
+                    label="💾 Сохранить конфиг", 
+                    callback=self.save_config,
+                    width=120
+                )
+                dpg.add_text("", tag="profile_description")
+            
             # Панель быстрых настроек
             with dpg.collapsing_header(label="⚙️ Быстрые настройки", default_open=True):
                 with dpg.group(horizontal=True):
@@ -246,7 +345,8 @@ class MainWindow:
                         dpg.add_text("Скорость сканирования:")
                         dpg.add_slider_int(
                             label="Пакетов/секунду",
-                            default_value=50, min_value=1, max_value=1000,
+                            default_value=self.config_manager.get_active_config().get("rate_limit", 10),
+                            min_value=1, max_value=1000,
                             tag="rate_limit",
                             callback=self.update_rate_limit
                         )
@@ -262,7 +362,8 @@ class MainWindow:
                         dpg.add_text("Глубина сканирования:")
                         dpg.add_slider_int(
                             label="Макс. глубина",
-                            default_value=3, min_value=1, max_value=10,
+                            default_value=self.config_manager.get_active_config().get("max_depth", 3),
+                            min_value=1, max_value=10,
                             tag="max_depth",
                             callback=self.update_max_depth
                         )
@@ -295,6 +396,9 @@ class MainWindow:
                 readonly=True,
                 width=-1
             )
+            
+            # Обновляем описание профиля
+            self.update_profile_description()
     
     def setup_results_tab(self):
         """Вкладка детальных результатов"""
@@ -373,6 +477,49 @@ class MainWindow:
             self.engine.callbacks['node_discovered'] = self.on_node_discovered
             self.engine.callbacks['scan_completed'] = self.on_scan_completed
     
+    def on_profile_change(self):
+        """Обработчик смены профиля"""
+        profile = dpg.get_value("scan_profile")
+        if self.config_manager.set_profile(profile):
+            config = self.config_manager.get_active_config()
+            
+            # Применяем настройки к движку
+            self.engine.rate_limit = config.get("rate_limit", 10)
+            self.engine.max_depth = config.get("max_depth", 5)
+            self.engine.max_concurrent_tasks = config.get("max_concurrent_tasks", 5)
+            
+            # Обновляем UI элементы
+            dpg.set_value("rate_limit", config.get("rate_limit", 10))
+            dpg.set_value("max_depth", config.get("max_depth", 5))
+            
+            self.update_profile_description()
+            self.add_to_log(f"📋 Установлен профиль: {profile}")
+    
+    def update_profile_description(self):
+        """Обновление описания профиля"""
+        profile = dpg.get_value("scan_profile")
+        description = self.config_manager.get_profile_description(profile)
+        dpg.set_value("profile_description", f" - {description}")
+    
+    def save_config(self):
+        """Сохранить текущую конфигурацию"""
+        # Собираем текущие настройки
+        current_config = {
+            "rate_limit": dpg.get_value("rate_limit"),
+            "max_depth": dpg.get_value("max_depth"),
+            "max_concurrent_tasks": self.engine.max_concurrent_tasks
+        }
+        
+        # Обновляем активный профиль
+        profile = dpg.get_value("scan_profile")
+        self.config_manager.update_profile(profile, current_config)
+        
+        # Сохраняем в файл
+        if self.config_manager.save_profiles():
+            self.add_to_log("💾 Конфигурация сохранена")
+        else:
+            self.add_to_log("❌ Ошибка сохранения конфигурации")
+    
     def start_scan(self):
         """Запуск сканирования"""
         target = dpg.get_value("target_input")
@@ -392,6 +539,7 @@ class MainWindow:
         scan_thread.start()
         
         self.add_to_log(f"🚀 Начато сканирование: {target}")
+        self.add_to_log(f"📋 Профиль: {dpg.get_value('scan_profile')}")
         dpg.set_value("current_status", "Сканирование...")
     
     def run_scan_async(self):
@@ -602,13 +750,15 @@ RapidRecon v1.0.0
     
     def quick_scan(self):
         """Быстрое сканирование"""
-        dpg.set_value("speed_profile", "Нормальный")
+        dpg.set_value("scan_profile", "normal")
+        self.on_profile_change()
         dpg.set_value("max_depth", 2)
         self.add_to_log("🚀 Настроено быстрое сканирование")
     
     def deep_scan(self):
         """Глубокое сканирование"""
-        dpg.set_value("speed_profile", "Агрессивный")
+        dpg.set_value("scan_profile", "aggressive")
+        self.on_profile_change()
         dpg.set_value("max_depth", 5)
         self.add_to_log("🔍 Настроено глубокое сканирование")
     
