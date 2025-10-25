@@ -22,6 +22,7 @@ class NodeType(Enum):
     ACTIVE_HOST = "active_host"
     OPEN_PORTS = "open_ports"
     DOMAIN_SCAN = "domain_scan"
+    VULNERABILITY_SCAN = "vulnerability_scan"
     CUSTOM = "custom"
 
 @dataclass
@@ -36,12 +37,18 @@ class ScanNode:
     module: str = "default"
     metadata: Dict[str, Any] = None
     ports: List[int] = None
+    services: List[Dict] = None
+    vulnerability_data: Dict = None
     
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
         if self.ports is None:
             self.ports = []
+        if self.services is None:
+            self.services = []
+        if self.vulnerability_data is None:
+            self.vulnerability_data = {}
 
 class PropagationEngine:
     """Движок авто-распространения сканирования"""
@@ -63,7 +70,8 @@ class PropagationEngine:
             'successful_scans': 0,
             'failed_scans': 0,
             'nodes_discovered': 0,
-            'modules_executed': 0
+            'modules_executed': 0,
+            'vulnerabilities_found': 0
         }
         
         # Настройка логирования
@@ -135,7 +143,8 @@ class PropagationEngine:
             return 'unknown'
     
     def add_custom_node(self, node_type: NodeType, data: Any, source: str, depth: int, 
-                       module: str = "default", metadata: Dict = None, ports: List[int] = None):
+                       module: str = "default", metadata: Dict = None, ports: List[int] = None,
+                       services: List[Dict] = None, vulnerability_data: Dict = None):
         """Добавить кастомный узел для сканирования"""
         node = ScanNode(
             node_id=f"{node_type.value}_{hash(str(data))}_{int(time.time())}",
@@ -146,7 +155,9 @@ class PropagationEngine:
             timestamp=time.time(),
             module=module,
             metadata=metadata or {},
-            ports=ports or []
+            ports=ports or [],
+            services=services or [],
+            vulnerability_data=vulnerability_data or {}
         )
         self.discovered_nodes.append(node)
         self.pending_scans.put(node)
@@ -210,7 +221,8 @@ class PropagationEngine:
             self._notify_gui_update('progress_update', {
                 'pending_tasks': self.pending_scans.qsize(),
                 'completed_tasks': len(self.completed_scans),
-                'discovered_nodes': len(self.discovered_nodes)
+                'discovered_nodes': len(self.discovered_nodes),
+                'vulnerabilities_found': self.stats['vulnerabilities_found']
             })
         
         self.logger.info("Обработка очереди завершена")
@@ -293,7 +305,13 @@ class PropagationEngine:
         """Запуск модуля сканирования"""
         # Если модуль имеет метод scan, используем его
         if hasattr(module, 'scan'):
-            results = await module.scan([task.data])
+            # Передаем дополнительные данные если есть
+            scan_data = [task.data]
+            if task.services:
+                # Для vulnerability_scanner передаем информацию о сервисах
+                scan_data = [task.data, task.services]
+            
+            results = await module.scan(scan_data)
             await self.process_module_results(results, task)
         else:
             # Запасной вариант для кастомных модулей
@@ -373,23 +391,69 @@ class PropagationEngine:
         
         # Обработка результатов service_detector
         elif results.get("module") == "service_detector" and results.get("services"):
-            for service_info in results["services"]:
-                new_node = ScanNode(
-                    node_id=f"service_{service_info['port']}_{service_info['type']}_{int(time.time())}",
-                    type=NodeType.SERVICE,
-                    data=f"{service_info['host']}:{service_info['port']}",
+            for host, services in results["services"].items():
+                if services:  # Если есть сервисы
+                    # Создаем узел для сканирования уязвимостей
+                    vulnerability_scan_node = ScanNode(
+                        node_id=f"vuln_scan_{host}_{int(time.time())}",
+                        type=NodeType.VULNERABILITY_SCAN,
+                        data=host,
+                        source=source_task.node_id,
+                        depth=source_task.depth + 1,
+                        timestamp=time.time(),
+                        module='vulnerability_scanner',
+                        metadata={'service_count': len(services)},
+                        services=services
+                    )
+                    await self.add_discovered_node(vulnerability_scan_node)
+                    
+                    # Также создаем узлы для каждого обнаруженного сервиса
+                    for service_info in services:
+                        service_node = ScanNode(
+                            node_id=f"service_{service_info['port']}_{service_info['type']}_{int(time.time())}",
+                            type=NodeType.SERVICE,
+                            data=f"{service_info['host']}:{service_info['port']}",
+                            source=source_task.node_id,
+                            depth=source_task.depth + 1,
+                            timestamp=time.time(),
+                            module='vulnerability_scanner',
+                            metadata={
+                                'service_type': service_info.get('type'),
+                                'banner': service_info.get('banner'),
+                                'port': service_info.get('port'),
+                                'protocol': service_info.get('protocol', 'tcp')
+                            }
+                        )
+                        await self.add_discovered_node(service_node)
+        
+        # Обработка результатов vulnerability_scanner
+        elif results.get("module") == "vulnerability_scanner" and results.get("vulnerabilities"):
+            for vuln in results["vulnerabilities"]:
+                self.stats['vulnerabilities_found'] += 1
+                
+                vulnerability_node = ScanNode(
+                    node_id=f"vuln_{vuln.get('cve', vuln['type'])}_{int(time.time())}",
+                    type=NodeType.VULNERABILITY,
+                    data=f"{vuln.get('cve', vuln['type'])} - {vuln['description']}",
                     source=source_task.node_id,
                     depth=source_task.depth + 1,
                     timestamp=time.time(),
-                    module='vulnerability_scanner',
+                    module='report_generator',
                     metadata={
-                        'service_type': service_info.get('type'),
-                        'banner': service_info.get('banner'),
-                        'port': service_info.get('port'),
-                        'protocol': service_info.get('protocol', 'tcp')
-                    }
+                        'severity': vuln.get('severity', 'unknown'),
+                        'confidence': vuln.get('confidence', 0.0),
+                        'cvss_score': vuln.get('cvss_score', 0.0)
+                    },
+                    vulnerability_data=vuln
                 )
-                await self.add_discovered_node(new_node)
+                await self.add_discovered_node(vulnerability_node)
+                
+                # Логируем найденную уязвимость
+                self.logger.warning(
+                    f"🔴 Найдена уязвимость: {vuln.get('cve', vuln['type'])} "
+                    f"(Severity: {vuln.get('severity', 'unknown')}) "
+                    f"на {source_task.data}"
+                )
         
         # Обработка общих результатов для других модулей
         else:
@@ -445,6 +509,7 @@ class PropagationEngine:
                 NodeType.ACTIVE_HOST: 'port_scanner',
                 NodeType.OPEN_PORTS: 'service_detector',
                 NodeType.SERVICE: 'vulnerability_scanner',
+                NodeType.VULNERABILITY_SCAN: 'vulnerability_scanner',
                 NodeType.VULNERABILITY: 'report_generator'
             }
             module_name = module_map.get(task.type)
@@ -513,6 +578,44 @@ class PropagationEngine:
                     metadata={'confidence': 0.7, 'simulated': True}
                 ) for sd in subdomains
             ]
+        elif task.type == NodeType.VULNERABILITY_SCAN:
+            # Симуляция обнаружения уязвимостей
+            vulnerabilities = [
+                {
+                    'type': 'weak_password',
+                    'cve': 'CVE-2023-12345',
+                    'description': 'Weak SSH password detected',
+                    'severity': 'high',
+                    'confidence': 0.9,
+                    'cvss_score': 7.5
+                },
+                {
+                    'type': 'outdated_software',
+                    'cve': 'CVE-2023-54321',
+                    'description': 'Outdated Apache version',
+                    'severity': 'medium',
+                    'confidence': 0.8,
+                    'cvss_score': 5.5
+                }
+            ]
+            return [
+                ScanNode(
+                    node_id=f"vuln_{vuln['cve']}_{int(time.time())}",
+                    type=NodeType.VULNERABILITY,
+                    data=f"{vuln['cve']} - {vuln['description']}",
+                    source=task.node_id,
+                    depth=task.depth + 1,
+                    timestamp=time.time(),
+                    module='report_generator',
+                    metadata={
+                        'severity': vuln['severity'],
+                        'confidence': vuln['confidence'],
+                        'cvss_score': vuln['cvss_score'],
+                        'simulated': True
+                    },
+                    vulnerability_data=vuln
+                ) for vuln in vulnerabilities
+            ]
         return []
     
     def get_statistics(self) -> Dict[str, Any]:
@@ -542,7 +645,9 @@ class PropagationEngine:
                     'timestamp': node.timestamp,
                     'module': node.module,
                     'metadata': node.metadata,
-                    'ports': node.ports
+                    'ports': node.ports,
+                    'services': node.services,
+                    'vulnerability_data': node.vulnerability_data
                 } for node in self.discovered_nodes
             ],
             'completed_scans': self.completed_scans
