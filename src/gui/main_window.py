@@ -318,17 +318,21 @@ class MainWindow:
         
         intensity = dpg.get_value("dashboard_intensity")
         self.update_activity_log(f"Starting {intensity} scan for: {target}")
+        self.logger.info(f"Starting scan for target: {target}, intensity: {intensity}")
         
         # ИНТЕГРАЦИЯ С ДВИЖКОМ - запускаем настоящее сканирование
         if hasattr(self.engine, 'add_initial_target'):
+            self.logger.info("Adding target to engine via add_initial_target")
             self.engine.add_initial_target(target)
             self.update_activity_log(f"Target {target} added to engine queue")
         
         # Запускаем через ControlsPanel
+        self.logger.info("Starting scan via ControlsPanel")
         self.controls_panel.start_scan(target, intensity)
         self.update_scan_state()
         
         # Запускаем обработку очереди в движке
+        self.logger.info("Starting engine processing")
         self.start_engine_processing()
     
     def start_engine_processing(self):
@@ -338,6 +342,7 @@ class MainWindow:
         
         def run_engine():
             try:
+                self.logger.info("Engine processing thread started")
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(self.engine.process_queue())
@@ -446,16 +451,19 @@ class MainWindow:
     def handle_engine_event(self, event_type: str, data: Any = None):
         """Обработка событий от движка - КЛЮЧЕВАЯ ФУНКЦИЯ"""
         try:
-            self.logger.info(f"GUI received event: {event_type}")
+            self.logger.info(f"GUI received event: {event_type}, data: {data}")
             
             if event_type in ['node_discovered', 'node_added', 'module_results', 'progress_update']:
                 # ОБНОВЛЯЕМ ДАННЫЕ ИЗ ДВИЖКА ПРАВИЛЬНО
+                self.logger.info(f"Updating engine data for event: {event_type}")
                 self.update_engine_data()
                 
                 # Обновляем UI
                 if self.current_tab == "network_tree":
+                    self.logger.info(f"Updating network tree with {len(self.nodes_data)} nodes, {len(self.hosts_data)} hosts")
                     self.network_tree.update_tree(self.nodes_data, self.hosts_data)
                 elif self.current_tab == "hosts_table":
+                    self.logger.info(f"Updating hosts table with {len(self.hosts_data)} hosts")
                     self.hosts_table.update_table(self.hosts_data)
                 
                 # Обновляем статистику СРАЗУ
@@ -476,19 +484,22 @@ class MainWindow:
                 
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
+            self.logger.error(traceback.format_exc())
     
     def update_engine_data(self):
         """Обновление данных из движка - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         try:
+            self.logger.info("=== UPDATING ENGINE DATA ===")
+            
             # Получаем данные напрямую из движка
             if hasattr(self.engine, 'discovered_nodes'):
-                # discovered_nodes это список ScanNode объектов
                 engine_nodes = self.engine.discovered_nodes
+                self.logger.info(f"Engine discovered_nodes: {len(engine_nodes)} nodes")
                 
                 # Конвертируем в словарь для network_tree
                 self.nodes_data = {}
-                for node in engine_nodes:
-                    node_id = getattr(node, 'node_id', str(id(node)))
+                for i, node in enumerate(engine_nodes):
+                    node_id = getattr(node, 'node_id', f"node_{i}")
                     self.nodes_data[node_id] = {
                         'id': node_id,
                         'type': getattr(node, 'type', 'unknown'),
@@ -496,12 +507,16 @@ class MainWindow:
                         'data': getattr(node, 'data', {}),
                         'timestamp': getattr(node, 'timestamp', time.time())
                     }
+                self.logger.info(f"Converted to nodes_data: {len(self.nodes_data)} nodes")
             
             # Обновляем hosts_data из движка
             if hasattr(self.engine, 'hosts_data'):
                 engine_hosts = self.engine.hosts_data
+                self.logger.info(f"Engine hosts_data type: {type(engine_hosts)}")
+                
                 if isinstance(engine_hosts, dict):
                     self.hosts_data = engine_hosts.copy()
+                    self.logger.info(f"Copied hosts_data: {len(self.hosts_data)} hosts")
                 else:
                     # Если hosts_data это не словарь, создаем из discovered_nodes
                     self.hosts_data = {}
@@ -517,13 +532,19 @@ class MainWindow:
                                 'last_seen': datetime.now().strftime("%H:%M:%S"),
                                 'tags': ['discovered']
                             }
+                    self.logger.info(f"Created hosts_data from nodes: {len(self.hosts_data)} hosts")
             
+            self.logger.info(f"=== FINAL: nodes_data: {len(self.nodes_data)}, hosts_data: {len(self.hosts_data)} ===")
+                
         except Exception as e:
             self.logger.error(f"Error updating engine data: {e}")
+            self.logger.error(traceback.format_exc())
     
     def update_statistics(self):
         """Обновление статистики на боковой панели"""
         try:
+            self.logger.info("=== UPDATING STATISTICS ===")
+            
             # Обновляем данные из движка перед расчетом статистики
             self.update_engine_data()
             
@@ -533,8 +554,14 @@ class MainWindow:
             total_services = sum(len(host.get('services', [])) for host in self.hosts_data.values())
             total_ports = sum(len(host.get('ports', [])) for host in self.hosts_data.values())
             
+            self.logger.info(f"Calculated stats - Nodes: {total_nodes}, Hosts: {total_hosts}, Services: {total_services}, Ports: {total_ports}")
+            
             # Получаем статистику из движка
-            engine_stats = self.engine.get_statistics() if hasattr(self.engine, 'get_statistics') else {}
+            engine_stats = {}
+            if hasattr(self.engine, 'get_statistics'):
+                engine_stats = self.engine.get_statistics()
+                self.logger.info(f"Engine stats: {engine_stats}")
+            
             total_vulns = engine_stats.get('vulnerabilities_found', 0)
             total_exploits = engine_stats.get('exploits_successful', 0)
             
@@ -550,8 +577,11 @@ class MainWindow:
             pending_tasks = engine_stats.get('pending_tasks', 0)
             dpg.set_value("stat_active_scans", f"Active Scans: {pending_tasks}")
             
+            self.logger.info("=== STATISTICS UPDATED ===")
+            
         except Exception as e:
             self.logger.error(f"Error updating statistics: {e}")
+            self.logger.error(traceback.format_exc())
     
     def run(self):
         """Запуск GUI"""
@@ -571,10 +601,20 @@ class MainWindow:
             
         except Exception as e:
             self.logger.error(f"Ошибка запуска GUI: {e}")
+            self.logger.error(traceback.format_exc())
     
     def check_engine_updates(self):
         """Проверка обновлений от движка"""
         try:
+            self.logger.info("Checking engine updates...")
+            
+            # Проверяем состояние движка
+            if hasattr(self.engine, 'discovered_nodes'):
+                self.logger.info(f"Engine has {len(self.engine.discovered_nodes)} discovered nodes")
+            
+            if hasattr(self.engine, 'hosts_data'):
+                self.logger.info(f"Engine has hosts_data: {type(self.engine.hosts_data)}")
+            
             # Обновляем данные из движка
             self.update_engine_data()
             
@@ -583,6 +623,7 @@ class MainWindow:
                     
         except Exception as e:
             self.logger.error(f"Error checking engine updates: {e}")
+            self.logger.error(traceback.format_exc())
     
     def destroy(self):
         """Уничтожение GUI"""
