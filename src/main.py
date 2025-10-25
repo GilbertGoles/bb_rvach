@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any, List, Type, Callable
 import signal
 import time
 import importlib
+import dearpygui.dearpygui as dpg
 
 # Добавление корневой директории в путь для импортов
 sys.path.insert(0, str(Path(__file__).parent))
