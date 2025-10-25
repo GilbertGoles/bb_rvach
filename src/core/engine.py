@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 import random
+import ipaddress
 
 class NodeType(Enum):
     """Типы обнаруживаемых узлов"""
@@ -20,6 +21,7 @@ class NodeType(Enum):
     VULNERABILITY = "vulnerability"
     ACTIVE_HOST = "active_host"
     OPEN_PORTS = "open_ports"
+    DOMAIN_SCAN = "domain_scan"
     CUSTOM = "custom"
 
 @dataclass
@@ -74,15 +76,27 @@ class PropagationEngine:
     def add_initial_target(self, target: str):
         """Добавить начальную цель для сканирования"""
         self.logger.info(f"Добавлена начальная цель: {target}")
+        
+        # Определяем тип цели и соответствующий модуль
+        if self._is_domain(target):
+            module = 'subdomain_scanner'
+            node_type = NodeType.INITIAL_TARGET
+        elif self._is_ip_address(target):
+            module = 'ping_scanner'
+            node_type = NodeType.INITIAL_TARGET
+        else:
+            module = 'ping_scanner'  # fallback
+            node_type = NodeType.INITIAL_TARGET
+        
         initial_node = ScanNode(
             node_id=f"initial_{target}_{int(time.time())}",
-            type=NodeType.INITIAL_TARGET,
+            type=node_type,
             data=target,
             source='user_input',
             depth=0,
             timestamp=time.time(),
-            module='ping_scanner',
-            metadata={'priority': 'high'}
+            module=module,
+            metadata={'priority': 'high', 'target_type': self._get_target_type(target)}
         )
         self.discovered_nodes.append(initial_node)
         self.pending_scans.put(initial_node)
@@ -90,6 +104,35 @@ class PropagationEngine:
         
         # Уведомляем GUI о новом узле
         self._notify_gui_update('node_added', initial_node)
+    
+    def _is_domain(self, target: str) -> bool:
+        """Проверка, является ли цель доменным именем"""
+        if '.' not in target:
+            return False
+        if target.replace('.', '').isdigit():
+            return False
+        try:
+            ipaddress.ip_address(target)
+            return False
+        except ValueError:
+            return True
+    
+    def _is_ip_address(self, target: str) -> bool:
+        """Проверка, является ли цель IP-адресом"""
+        try:
+            ipaddress.ip_address(target)
+            return True
+        except ValueError:
+            return False
+    
+    def _get_target_type(self, target: str) -> str:
+        """Определение типа цели"""
+        if self._is_domain(target):
+            return 'domain'
+        elif self._is_ip_address(target):
+            return 'ip_address'
+        else:
+            return 'unknown'
     
     def add_custom_node(self, node_type: NodeType, data: Any, source: str, depth: int, 
                        module: str = "default", metadata: Dict = None, ports: List[int] = None):
@@ -259,20 +302,57 @@ class PropagationEngine:
     async def process_module_results(self, results: Dict[str, Any], source_task: ScanNode):
         """Обработка результатов модуля сканирования"""
         
+        # Обработка результатов subdomain_scanner
+        if results.get("module") == "subdomain_scanner" and results.get("subdomains"):
+            for subdomain_info in results["subdomains"]:
+                new_node = ScanNode(
+                    node_id=f"subdomain_{subdomain_info['subdomain']}_{int(time.time())}",
+                    type=NodeType.SUBDOMAIN,
+                    data=subdomain_info["subdomain"],
+                    source=source_task.node_id,
+                    depth=source_task.depth + 1,
+                    timestamp=time.time(),
+                    module='ping_scanner',
+                    metadata={
+                        'confidence': subdomain_info.get('confidence', 0.8),
+                        'source': subdomain_info.get('source', 'unknown')
+                    }
+                )
+                await self.add_discovered_node(new_node)
+        
         # Обработка результатов ping_scanner
-        if results.get("module") == "ping_scanner" and results.get("active_hosts"):
+        elif results.get("module") == "ping_scanner" and results.get("active_hosts"):
             for host in results["active_hosts"]:
                 new_node = ScanNode(
                     node_id=f"active_host_{host['ip']}_{int(time.time())}",
                     type=NodeType.ACTIVE_HOST,
                     data=host["ip"],
-                    source=source_task.node_id,  # Используем node_id для точной связи
+                    source=source_task.node_id,
                     depth=source_task.depth + 1,
                     timestamp=time.time(),
                     module='port_scanner',
-                    metadata={'host_status': 'active', 'response_time': host.get('response_time')}
+                    metadata={
+                        'host_status': 'active', 
+                        'response_time': host.get('response_time'),
+                        'original_target': source_task.data
+                    }
                 )
                 await self.add_discovered_node(new_node)
+            
+            # Дополнительная логика: для доменов запускаем поиск поддоменов
+            if (source_task.type == NodeType.INITIAL_TARGET and 
+                self._is_domain(source_task.data)):
+                domain_scan_node = ScanNode(
+                    node_id=f"domain_scan_{source_task.data}_{int(time.time())}",
+                    type=NodeType.DOMAIN_SCAN,
+                    data=source_task.data,
+                    source=source_task.node_id,
+                    depth=source_task.depth + 1,
+                    timestamp=time.time(),
+                    module='subdomain_scanner',
+                    metadata={'triggered_by': 'ping_scanner_results'}
+                )
+                await self.add_discovered_node(domain_scan_node)
         
         # Обработка результатов port_scanner
         elif results.get("module") == "port_scanner" and results.get("open_ports"):
@@ -287,7 +367,7 @@ class PropagationEngine:
                         timestamp=time.time(),
                         module='service_detector',
                         metadata={'port_count': len(ports)},
-                        ports=ports
+                        ports=[port_info["port"] for port_info in ports]
                     )
                     await self.add_discovered_node(new_node)
         
@@ -305,7 +385,8 @@ class PropagationEngine:
                     metadata={
                         'service_type': service_info.get('type'),
                         'banner': service_info.get('banner'),
-                        'port': service_info.get('port')
+                        'port': service_info.get('port'),
+                        'protocol': service_info.get('protocol', 'tcp')
                     }
                 )
                 await self.add_discovered_node(new_node)
@@ -358,8 +439,9 @@ class PropagationEngine:
             # Базовая логика выбора модуля по типу узла
             module_map = {
                 NodeType.INITIAL_TARGET: 'ping_scanner',
-                NodeType.SUBDOMAIN: 'subdomain_scanner',
-                NodeType.IP_ADDRESS: 'port_scanner',
+                NodeType.SUBDOMAIN: 'ping_scanner',
+                NodeType.IP_ADDRESS: 'ping_scanner',
+                NodeType.DOMAIN_SCAN: 'subdomain_scanner',
                 NodeType.ACTIVE_HOST: 'port_scanner',
                 NodeType.OPEN_PORTS: 'service_detector',
                 NodeType.SERVICE: 'vulnerability_scanner',
@@ -371,32 +453,33 @@ class PropagationEngine:
     
     def simulate_findings(self, task: ScanNode) -> List[ScanNode]:
         """Временная функция для симуляции находок (для демонстрации)"""
-        if task.type == NodeType.INITIAL_TARGET:
-            subdomains = ['api', 'admin', 'test', 'dev', 'staging']
+        if task.type == NodeType.INITIAL_TARGET and self._is_domain(task.data):
+            # Для доменов - находим поддомены
+            subdomains = ['api', 'admin', 'test', 'dev', 'staging', 'www', 'mail', 'ftp']
             return [
                 ScanNode(
                     node_id=f"subdomain_{sd}_{task.data}_{int(time.time())}",
                     type=NodeType.SUBDOMAIN,
                     data=f'{sd}.{task.data}',
-                    source=task.node_id,  # Используем node_id для точной связи
-                    depth=task.depth + 1,
-                    timestamp=time.time(),
-                    module='subdomain_scanner',
-                    metadata={'confidence': 0.8}
-                ) for sd in subdomains
-            ]
-        elif task.type == NodeType.SUBDOMAIN:
-            # Симуляция обнаружения IP-адресов
-            return [
-                ScanNode(
-                    node_id=f"ip_{task.data.replace('.', '_')}_{int(time.time())}",
-                    type=NodeType.IP_ADDRESS,
-                    data=f'192.168.1.{random.randint(1, 254)}',
                     source=task.node_id,
                     depth=task.depth + 1,
                     timestamp=time.time(),
                     module='ping_scanner',
-                    metadata={'type': 'A_record'}
+                    metadata={'confidence': 0.8, 'simulated': True}
+                ) for sd in subdomains
+            ]
+        elif task.type == NodeType.SUBDOMAIN:
+            # Симуляция обнаружения IP-адресов для поддоменов
+            return [
+                ScanNode(
+                    node_id=f"ip_{task.data.replace('.', '_')}_{int(time.time())}",
+                    type=NodeType.ACTIVE_HOST,
+                    data=f'192.168.1.{random.randint(1, 254)}',
+                    source=task.node_id,
+                    depth=task.depth + 1,
+                    timestamp=time.time(),
+                    module='port_scanner',
+                    metadata={'type': 'A_record', 'simulated': True}
                 )
             ]
         elif task.type == NodeType.ACTIVE_HOST:
@@ -411,9 +494,24 @@ class PropagationEngine:
                     depth=task.depth + 1,
                     timestamp=time.time(),
                     module='service_detector',
-                    metadata={'port_count': len(open_ports)},
+                    metadata={'port_count': len(open_ports), 'simulated': True},
                     ports=open_ports
                 )
+            ]
+        elif task.type == NodeType.DOMAIN_SCAN:
+            # Симуляция поиска поддоменов
+            subdomains = ['ns1', 'ns2', 'cdn', 'assets', 'static']
+            return [
+                ScanNode(
+                    node_id=f"subdomain_{sd}_{task.data}_{int(time.time())}",
+                    type=NodeType.SUBDOMAIN,
+                    data=f'{sd}.{task.data}',
+                    source=task.node_id,
+                    depth=task.depth + 1,
+                    timestamp=time.time(),
+                    module='ping_scanner',
+                    metadata={'confidence': 0.7, 'simulated': True}
+                ) for sd in subdomains
             ]
         return []
     
@@ -481,9 +579,10 @@ async def main():
         update_callback=gui_update_callback
     )
     
-    # Добавляем начальные цели
-    engine.add_initial_target("example.com")
-    engine.add_initial_target("test.org")
+    # Добавляем начальные цели разных типов
+    engine.add_initial_target("example.com")  # Домен
+    engine.add_initial_target("192.168.1.1")  # IP-адрес
+    engine.add_initial_target("8.8.8.8")      # Публичный IP
     
     # Запускаем обработку
     await engine.process_queue()
