@@ -1,0 +1,9 @@
+{
+    "name": "service_detector", 
+    "version": "1.0.0",
+    "description": "Определение сервисов на открытых портах",
+    "author": "RapidRecon Team",
+    "input_types": ["open_ports"],
+    "output_types": ["services", "banners"],
+    "triggers": ["vulnerability_scan"]
+}
