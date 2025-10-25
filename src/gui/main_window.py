@@ -1,727 +1,639 @@
 """
-Главное окно RapidRecon на Dear PyGui
+Главное окно RapidRecon в стиле Obsidian
 """
 import dearpygui.dearpygui as dpg
-from typing import Callable, Dict, Any, List, Optional
-import asyncio
-import threading
+from typing import Dict, Any, List, Optional
 import time
 import json
 from datetime import datetime
 import logging
+import math
 
-class GraphView:
-    """Компонент для визуализации графа обнаруженных узлов"""
+class ObsidianTheme:
+    """Тема в стиле Obsidian"""
+    
+    @staticmethod
+    def setup_theme():
+        """Настройка темы Obsidian"""
+        
+        with dpg.theme() as obsidian_theme:
+            # Цветовая схема Obsidian
+            colors = {
+                'bg_primary': [18, 18, 24],
+                'bg_secondary': [28, 28, 36],
+                'bg_tertiary': [38, 38, 48],
+                'accent_primary': [123, 97, 255],
+                'accent_secondary': [86, 156, 214],
+                'text_primary': [220, 220, 220],
+                'text_secondary': [150, 150, 160],
+                'text_muted': [100, 100, 110],
+                'success': [72, 199, 116],
+                'warning': [255, 179, 64],
+                'error': [255, 92, 87],
+                'border': [60, 60, 70]
+            }
+            
+            # Основные компоненты
+            with dpg.theme_component(dpg.mvAll):
+                dpg.add_theme_color(dpg.mvThemeCol_WindowBg, colors['bg_primary'])
+                dpg.add_theme_color(dpg.mvThemeCol_Text, colors['text_primary'])
+                dpg.add_theme_color(dpg.mvThemeCol_Border, colors['border'])
+                dpg.add_theme_style(dpg.mvStyleVar_WindowRounding, 8)
+                dpg.add_theme_style(dpg.mvStyleVar_FrameRounding, 6)
+                dpg.add_theme_style(dpg.mvStyleVar_GrabRounding, 6)
+            
+            # Кнопки
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, colors['bg_tertiary'])
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, colors['accent_primary'])
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, [103, 77, 235])
+                dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 8, 4)
+            
+            # Поля ввода
+            with dpg.theme_component(dpg.mvInputText):
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBg, colors['bg_secondary'])
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBgHovered, colors['bg_tertiary'])
+                dpg.add_theme_color(dpg.mvThemeCol_FrameBgActive, colors['bg_tertiary'])
+                dpg.add_theme_style(dpg.mvStyleVar_FramePadding, 8, 6)
+            
+            # Вкладки
+            with dpg.theme_component(dpg.mvTabBar):
+                dpg.add_theme_color(dpg.mvThemeCol_Tab, colors['bg_secondary'])
+                dpg.add_theme_color(dpg.mvThemeCol_TabHovered, colors['accent_primary'])
+                dpg.add_theme_color(dpg.mvThemeCol_TabActive, colors['accent_primary'])
+                dpg.add_theme_color(dpg.mvThemeCol_TabUnfocused, colors['bg_secondary'])
+                dpg.add_theme_color(dpg.mvThemeCol_TabUnfocusedActive, colors['bg_tertiary'])
+            
+            # Заголовки
+            with dpg.theme_component(dpg.mvCollapsingHeader):
+                dpg.add_theme_color(dpg.mvThemeCol_Header, colors['bg_secondary'])
+                dpg.add_theme_color(dpg.mvThemeCol_HeaderHovered, colors['accent_primary'])
+                dpg.add_theme_color(dpg.mvThemeCol_HeaderActive, colors['accent_primary'])
+        
+        return obsidian_theme
+
+class GraphVisualization:
+    """Визуализация графа в стиле Obsidian"""
     
     def __init__(self):
         self.nodes = {}
-        self.edges = {}
+        self.edges = []
         self.node_counter = 0
-        self.setup_graph_theme()
+        self.selected_node = None
     
-    def setup_graph_theme(self):
-        """Настройка темы для графа"""
-        with dpg.theme(tag="graph_theme"):
-            with dpg.theme_component(dpg.mvNode):
-                dpg.add_theme_color(dpg.mvNodeCol_TitleBar, (70, 70, 100))
-                dpg.add_theme_color(dpg.mvNodeCol_TitleBarHovered, (90, 90, 120))
-                dpg.add_theme_color(dpg.mvNodeCol_TitleBarSelected, (110, 110, 140))
+    def draw_graph(self, width: int, height: int):
+        """Отрисовка графа"""
+        # Фон графа
+        dpg.draw_rectangle(
+            [0, 0], 
+            [width, height], 
+            fill=[25, 25, 32],
+            parent="graph_canvas"
+        )
+        
+        # Сетка (тонкая)
+        grid_size = 50
+        for x in range(0, width, grid_size):
+            dpg.draw_line(
+                [x, 0], [x, height],
+                color=[40, 40, 50],
+                thickness=1,
+                parent="graph_canvas"
+            )
+        for y in range(0, height, grid_size):
+            dpg.draw_line(
+                [0, y], [width, y],
+                color=[40, 40, 50],
+                thickness=1,
+                parent="graph_canvas"
+            )
+        
+        # Отрисовка связей
+        for edge in self.edges:
+            source = self.nodes.get(edge['source'])
+            target = self.nodes.get(edge['target'])
+            if source and target:
+                dpg.draw_line(
+                    source['position'], target['position'],
+                    color=[123, 97, 255, 100],
+                    thickness=2,
+                    parent="graph_canvas"
+                )
+        
+        # Отрисовка узлов
+        for node_id, node in self.nodes.items():
+            pos = node['position']
+            color = node['color']
             
-            with dpg.theme_component(dpg.mvNodeAttribute):
-                dpg.add_theme_color(dpg.mvNodeCol_Attr, (60, 60, 80))
-    
-    def setup_graph_tab(self):
-        """Настройка вкладки графа"""
-        with dpg.tab(label="🌐 Граф сети", tag="graph_tab"):
-            with dpg.group(horizontal=True):
-                # Панель управления графом
-                with dpg.child_window(width=200):
-                    dpg.add_text("Управление графом:")
-                    dpg.add_button(label="Обновить граф", callback=self.update_graph)
-                    dpg.add_button(label="Очистить граф", callback=self.clear_graph)
-                    dpg.add_button(label="Экспорт графа", callback=self.export_graph)
-                    dpg.add_separator()
-                    dpg.add_text("Настройки отображения:")
-                    dpg.add_checkbox(label="Показывать типы", default_value=True, tag="show_types")
-                    dpg.add_checkbox(label="Группировать по типу", default_value=False, tag="group_by_type")
-                    dpg.add_slider_float(label="Масштаб", default_value=1.0, min_value=0.1, max_value=2.0, tag="graph_scale")
-                
-                # Область графа
-                with dpg.child_window(tag="graph_window"):
-                    with dpg.node_editor(
-                        tag="node_editor",
-                        minimap=True,
-                        minimap_location=dpg.mvNodeMiniMap_Location_BottomRight
-                    ):
-                        pass  # Узлы будут добавляться динамически
+            # Основной круг узла
+            dpg.draw_circle(
+                pos, node['radius'],
+                fill=color,
+                color=[255, 255, 255, 50] if node_id != self.selected_node else [255, 255, 0, 200],
+                thickness=3 if node_id == self.selected_node else 2,
+                parent="graph_canvas"
+            )
+            
+            # Текст метки
+            dpg.draw_text(
+                [pos[0] - len(node['label']) * 3, pos[1] + node['radius'] + 5],
+                node['label'],
+                color=[220, 220, 220],
+                size=12,
+                parent="graph_canvas"
+            )
     
     def add_node(self, node_data: Dict[str, Any]) -> int:
-        """Добавить узел в граф"""
+        """Добавить узел"""
         node_id = self.node_counter
         self.node_counter += 1
         
-        # Определяем цвет узла по типу
-        node_colors = {
-            'initial_target': (100, 200, 100),
-            'subdomain': (100, 150, 200),
-            'ip_address': (200, 150, 100),
-            'active_host': (200, 100, 100),
-            'open_ports': (150, 100, 200),
-            'service': (100, 200, 200),
-            'vulnerability': (200, 100, 150),
-            'exploitation': (255, 50, 50),
-            'exploitation_success': (255, 0, 0),
-            'internal_scan': (50, 150, 255)
+        # Цвета узлов по типам (в стиле Obsidian)
+        type_colors = {
+            'initial_target': [72, 199, 116],    # Зеленый
+            'subdomain': [86, 156, 214],         # Синий
+            'active_host': [255, 179, 64],       # Оранжевый
+            'open_ports': [123, 97, 255],        # Фиолетовый
+            'service': [158, 118, 255],          # Лавандовый
+            'vulnerability': [255, 92, 87],      # Красный
+            'exploitation': [255, 92, 87],       # Красный
+            'exploitation_success': [255, 92, 87], # Ярко-красный
+            'internal_scan': [64, 192, 192]      # Бирюзовый
         }
         
-        color = node_colors.get(node_data.get('type', 'custom'), (150, 150, 150))
+        # Позиционирование (простая круговая компоновка)
+        angle = (node_id * 2 * math.pi / max(1, len(self.nodes)))
+        radius = 150 + (len(self.nodes) * 10)
+        center_x, center_y = 400, 300
         
-        with dpg.node(
-            parent="node_editor",
-            label=f"{node_data.get('type', 'node')}",
-            tag=f"node_{node_id}",
-            pos=[100 + (node_id % 5) * 200, 100 + (node_id // 5) * 150]
-        ):
-            # Заголовок узла
-            with dpg.node_attribute(attribute_type=dpg.mvNode_Attr_Static):
-                dpg.add_text(f"Данные: {node_data.get('data', 'N/A')}")
-            
-            # Дополнительная информация
-            with dpg.node_attribute(attribute_type=dpg.mvNode_Attr_Static):
-                if 'depth' in node_data:
-                    dpg.add_text(f"Глубина: {node_data['depth']}")
-                if 'module' in node_data:
-                    dpg.add_text(f"Модуль: {node_data['module']}")
-            
-            # Входной порт
-            with dpg.node_attribute(attribute_type=dpg.mvNode_Attr_Input, tag=f"in_{node_id}"):
-                dpg.add_text("Вход")
-            
-            # Выходной порт
-            with dpg.node_attribute(attribute_type=dpg.mvNode_Attr_Output, tag=f"out_{node_id}"):
-                dpg.add_text("Выход")
-        
-        # Применяем тему
-        dpg.bind_item_theme(f"node_{node_id}", "graph_theme")
+        position = [
+            center_x + radius * math.cos(angle),
+            center_y + radius * math.sin(angle)
+        ]
         
         self.nodes[node_id] = {
+            'id': node_id,
+            'label': self._truncate_label(node_data.get('data', 'Node')),
+            'type': node_data.get('type', 'custom'),
             'data': node_data,
-            'dpg_id': f"node_{node_id}"
+            'position': position,
+            'radius': 20,
+            'color': type_colors.get(node_data.get('type', 'custom'), [128, 128, 128])
         }
         
         return node_id
     
-    def add_edge(self, source_node_id: int, target_node_id: int):
-        """Добавить связь между узлами"""
-        if source_node_id in self.nodes and target_node_id in self.nodes:
-            edge_id = f"edge_{source_node_id}_{target_node_id}"
-            dpg.add_node_link(
-                f"out_{source_node_id}",
-                f"in_{target_node_id}",
-                parent="node_editor",
-                tag=edge_id
-            )
-            self.edges[edge_id] = (source_node_id, target_node_id)
+    def add_edge(self, source_id: int, target_id: int):
+        """Добавить связь"""
+        if source_id in self.nodes and target_id in self.nodes:
+            self.edges.append({
+                'source': source_id,
+                'target': target_id
+            })
     
-    def clear_graph(self):
+    def _truncate_label(self, label: str, max_length: int = 15) -> str:
+        """Обрезать длинные метки"""
+        return label if len(label) <= max_length else label[:max_length-3] + "..."
+    
+    def clear(self):
         """Очистить граф"""
-        dpg.delete_item("node_editor", children_only=True)
         self.nodes.clear()
         self.edges.clear()
         self.node_counter = 0
-    
-    def update_graph(self):
-        """Обновить отображение графа"""
-        # В будущем можно добавить автоматическую компоновку
-        pass
-    
-    def export_graph(self):
-        """Экспорт графа в файл"""
-        graph_data = {
-            'nodes': [
-                {**node['data'], 'graph_id': node_id}
-                for node_id, node in self.nodes.items()
-            ],
-            'edges': list(self.edges.values())
-        }
-        
-        filename = f"rapidrecon_graph_{int(time.time())}.json"
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(graph_data, f, indent=2, ensure_ascii=False)
-        
-        return filename
+        self.selected_node = None
 
-class MainWindow:
+class ObsidianMainWindow:
     """
-    Главный интерфейс RapidRecon с расширенным функционалом
+    Главный интерфейс RapidRecon в стиле Obsidian
     """
     
     def __init__(self, engine, module_manager):
         self.engine = engine
         self.module_manager = module_manager
-        self.graph_view = GraphView()
+        self.graph = GraphVisualization()
         self.is_scanning = False
-        self.scan_stats = {}
-        self.real_time_data = []
         self.logger = logging.getLogger('RapidRecon.GUI')
+        
+        # Инициализация GUI
         self.setup_gui()
         
-        # Настройка темы
-        self.setup_theme()
-        
-        # Привязка callback для обновления UI
-        self.setup_callbacks()
+        # Применение темы
+        self.theme = ObsidianTheme.setup_theme()
+        dpg.bind_theme(self.theme)
     
     def setup_gui(self):
-        """Настройка основного интерфейса"""
+        """Настройка интерфейса в стиле Obsidian"""
         dpg.create_context()
         
-        # Создание меню
-        with dpg.viewport_menu_bar():
-            with dpg.menu(label="Файл"):
-                dpg.add_menu_item(label="Экспорт результатов", callback=self.export_results)
-                dpg.add_menu_item(label="Экспорт графа", callback=self.export_graph)
-                dpg.add_menu_item(label="Настройки", callback=self.show_settings)
-                dpg.add_separator()
-                dpg.add_menu_item(label="Выход", callback=self.exit_app)
+        # Главное окно
+        with dpg.window(
+            tag="main_window",
+            label="RapidRecon",
+            width=1400,
+            height=900,
+            no_move=True,
+            no_resize=True,
+            no_collapse=True,
+            no_close=True
+        ):
+            # Боковая панель (как в Obsidian)
+            with dpg.child_window(
+                tag="sidebar",
+                width=250,
+                border=False
+            ):
+                self._setup_sidebar()
             
-            with dpg.menu(label="Сканирование"):
-                dpg.add_menu_item(label="Быстрое сканирование", callback=self.quick_scan)
-                dpg.add_menu_item(label="Глубокое сканирование", callback=self.deep_scan)
-                dpg.add_menu_item(label="Кастомное сканирование", callback=self.custom_scan)
-            
-            with dpg.menu(label="Модули"):
-                dpg.add_menu_item(label="Управление модулями", callback=self.show_module_manager)
-                dpg.add_menu_item(label="Обновить модули", callback=self.refresh_modules)
-            
-            with dpg.menu(label="Вид"):
-                dpg.add_menu_item(label="Обновить граф", callback=self.update_graph_from_engine)
-                dpg.add_menu_item(label="Очистить граф", callback=self.graph_view.clear_graph)
-            
-            with dpg.menu(label="Справка"):
-                dpg.add_menu_item(label="О программе", callback=self.show_about)
+            # Основная область
+            with dpg.group(horizontal=True, width=-1, height=-1):
+                # Область контента
+                with dpg.child_window(
+                    tag="content_area",
+                    width=-1,
+                    border=False
+                ):
+                    self._setup_content_area()
         
-        with dpg.window(tag="Primary Window", label="RapidRecon - Инструмент разведки"):
-            # Панель вкладок
-            with dpg.tab_bar(tag="main_tab_bar"):
-                # Вкладка сканирования
-                self.setup_scan_tab()
-                
-                # Вкладка графа
-                self.graph_view.setup_graph_tab()
-                
-                # Вкладка результатов
-                self.setup_results_tab()
-                
-                # Вкладка модулей
-                self.setup_modules_tab()
+        # Настройка viewport
+        dpg.create_viewport(
+            title='RapidRecon • Security Reconnaissance',
+            width=1400,
+            height=900,
+            min_width=1000,
+            min_height=700
+        )
     
-    def setup_scan_tab(self):
+    def _setup_sidebar(self):
+        """Боковая панель Obsidian"""
+        # Логотип
+        with dpg.group():
+            dpg.add_spacer(height=20)
+            dpg.add_text("RapidRecon", color=[123, 97, 255])
+            dpg.add_text("Security Tool", color=[150, 150, 160])
+            dpg.add_separator()
+        
+        # Навигация
+        with dpg.collapsing_header(
+            label="🧭 Navigation",
+            default_open=True,
+            closable=False
+        ):
+            dpg.add_button(
+                label="🎯 Scan Control",
+                width=-1,
+                callback=lambda: self._switch_tab("scan_tab")
+            )
+            dpg.add_button(
+                label="🌐 Network Graph", 
+                width=-1,
+                callback=lambda: self._switch_tab("graph_tab")
+            )
+            dpg.add_button(
+                label="📊 Results",
+                width=-1,
+                callback=lambda: self._switch_tab("results_tab")
+            )
+            dpg.add_button(
+                label="🔧 Modules",
+                width=-1,
+                callback=lambda: self._switch_tab("modules_tab")
+            )
+        
+        # Профили сканирования
+        with dpg.collapsing_header(
+            label="⚡ Scan Profiles",
+            default_open=True
+        ):
+            profiles = self.engine.get_available_profiles()
+            for profile in profiles:
+                dpg.add_button(
+                    label=f"• {profile.title()}",
+                    width=-1,
+                    callback=lambda s, d, p=profile: self._set_profile(p)
+                )
+        
+        # Статистика
+        with dpg.collapsing_header(
+            label="📈 Quick Stats",
+            default_open=True
+        ):
+            dpg.add_text("Nodes: 0", tag="stat_nodes")
+            dpg.add_text("Targets: 0", tag="stat_targets")
+            dpg.add_text("Vulnerabilities: 0", tag="stat_vulns")
+            dpg.add_text("Exploits: 0", tag="stat_exploits")
+        
+        # Действия
+        with dpg.group():
+            dpg.add_separator()
+            dpg.add_button(
+                label="⚙️ Settings",
+                width=-1
+            )
+            dpg.add_button(
+                label="📤 Export Data", 
+                width=-1,
+                callback=self.export_results
+            )
+    
+    def _setup_content_area(self):
+        """Основная область контента"""
+        with dpg.tab_bar(tag="main_tabs"):
+            # Вкладка сканирования
+            with dpg.tab(label="🎯 Scan", tag="scan_tab"):
+                self._setup_scan_tab()
+            
+            # Вкладка графа
+            with dpg.tab(label="🌐 Graph", tag="graph_tab"):
+                self._setup_graph_tab()
+            
+            # Вкладка результатов
+            with dpg.tab(label="📊 Results", tag="results_tab"):
+                self._setup_results_tab()
+            
+            # Вкладка модулей
+            with dpg.tab(label="🔧 Modules", tag="modules_tab"):
+                self._setup_modules_tab()
+    
+    def _setup_scan_tab(self):
         """Вкладка управления сканированием"""
-        with dpg.tab(label="🎯 Сканирование"):
-            # Основная панель управления
+        # Панель быстрого запуска
+        with dpg.group():
+            dpg.add_text("Quick Scan", color=[123, 97, 255])
             with dpg.group(horizontal=True):
                 dpg.add_input_text(
-                    tag="target_input", 
-                    hint="Введите домен, IP или диапазон",
+                    tag="target_input",
+                    hint="example.com / 192.168.1.1",
                     width=300
                 )
                 dpg.add_button(
-                    label="▶️ Сканировать", 
-                    callback=self.start_scan,
-                    tag="scan_button"
+                    label="Start Scan",
+                    tag="scan_button",
+                    callback=self.start_scan
                 )
                 dpg.add_button(
-                    label="⏹️ Стоп", 
+                    label="Stop", 
+                    tag="stop_button",
                     callback=self.stop_scan,
-                    tag="stop_button"
+                    show=False
                 )
-                dpg.add_button(
-                    label="🧹 Очистить", 
-                    callback=self.clear_results
-                )
-                dpg.add_spacer(width=20)
-                dpg.add_text("Статус:", tag="status_text")
-                dpg.add_text("Ожидание", tag="current_status")
-            
-            # Выбор профиля сканирования
+        
+        # Статус и прогресс
+        with dpg.group():
+            dpg.add_text("Status: Ready", tag="status_text")
+            dpg.add_progress_bar(
+                tag="progress_bar",
+                default_value=0.0,
+                width=-1,
+                height=8
+            )
+        
+        # Расширенные настройки
+        with dpg.collapsing_header(label="Advanced Settings"):
             with dpg.group(horizontal=True):
-                dpg.add_text("Профиль:")
-                dpg.add_combo(
-                    items=self.engine.get_available_profiles(),
-                    default_value=self.engine.config_manager.active_profile,
-                    tag="scan_profile",
-                    callback=self.on_profile_change,
-                    width=120
-                )
-                dpg.add_button(
-                    label="💾 Сохранить конфиг", 
-                    callback=self.save_config,
-                    width=120
-                )
-                dpg.add_text("", tag="profile_description")
+                with dpg.child_window(width=300):
+                    dpg.add_slider_int(
+                        label="Rate Limit",
+                        tag="rate_limit",
+                        default_value=self.engine.rate_limit,
+                        min_value=1,
+                        max_value=100
+                    )
+                    dpg.add_slider_int(
+                        label="Max Depth", 
+                        tag="max_depth",
+                        default_value=self.engine.max_depth,
+                        min_value=1,
+                        max_value=10
+                    )
+                
+                with dpg.child_window(width=300):
+                    dpg.add_checkbox(
+                        label="Aggressive Mode",
+                        tag="aggressive_mode"
+                    )
+                    dpg.add_checkbox(
+                        label="Enable Exploitation",
+                        tag="enable_exploitation"
+                    )
+        
+        # Лог в реальном времени
+        dpg.add_text("Activity Log")
+        dpg.add_input_text(
+            tag="activity_log",
+            multiline=True,
+            height=300,
+            readonly=True,
+            width=-1
+        )
+    
+    def _setup_graph_tab(self):
+        """Вкладка графа сети"""
+        with dpg.group():
+            # Панель управления графом
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Refresh Graph", callback=self.update_graph)
+                dpg.add_button(label="Clear Graph", callback=self.clear_graph)
+                dpg.add_button(label="Export Graph", callback=self.export_graph)
             
-            # Панель быстрых настроек
-            with dpg.collapsing_header(label="⚙️ Быстрые настройки", default_open=True):
-                with dpg.group(horizontal=True):
-                    with dpg.child_window(width=300):
-                        dpg.add_text("Скорость сканирования:")
-                        dpg.add_slider_int(
-                            label="Пакетов/секунду",
-                            default_value=self.engine.rate_limit,
-                            min_value=1, max_value=1000,
-                            tag="rate_limit",
-                            callback=self.update_rate_limit
-                        )
-                        dpg.add_combo(
-                            label="Профиль скорости",
-                            items=["Стелс", "Нормальный", "Агрессивный", "Безумный"],
-                            default_value="Нормальный",
-                            tag="speed_profile",
-                            callback=self.update_speed_profile
-                        )
-                    
-                    with dpg.child_window(width=300):
-                        dpg.add_text("Глубина сканирования:")
-                        dpg.add_slider_int(
-                            label="Макс. глубина",
-                            default_value=self.engine.max_depth,
-                            min_value=1, max_value=10,
-                            tag="max_depth",
-                            callback=self.update_max_depth
-                        )
-                        dpg.add_checkbox(
-                            label="Рекурсивное сканирование",
-                            default_value=True,
-                            tag="recursive_scan"
-                        )
-                    
-                    with dpg.child_window(width=300):
-                        dpg.add_text("Модули:")
-                        dpg.add_combo(
-                            label="Тип сканирования",
-                            items=["Авто", "Только поддомены", "Порты и сервисы", "Уязвимости"],
-                            default_value="Авто",
-                            tag="scan_type"
-                        )
-                        dpg.add_checkbox(
-                            label="Пассивное сканирование",
-                            default_value=False,
-                            tag="passive_scan"
-                        )
+            # Область графа
+            with dpg.child_window(
+                tag="graph_container",
+                height=600,
+                border=True
+            ):
+                with dpg.drawlist(
+                    tag="graph_canvas",
+                    width=-1,
+                    height=-1
+                ):
+                    # Граф будет рисоваться динамически
+                    pass
+    
+    def _setup_results_tab(self):
+        """Вкладка результатов"""
+        with dpg.group(horizontal=True):
+            # Дерево узлов
+            with dpg.child_window(width=400):
+                dpg.add_text("Discovered Nodes")
+                dpg.add_tree_node(
+                    tag="nodes_tree",
+                    label="Network Structure",
+                    default_open=True
+                )
             
-            # Лог сканирования
-            dpg.add_text("Лог сканирования:")
+            # Детальная информация
+            with dpg.child_window():
+                dpg.add_text("Node Details")
+                dpg.add_input_text(
+                    tag="node_details",
+                    multiline=True,
+                    height=400,
+                    readonly=True,
+                    width=-1
+                )
+    
+    def _setup_modules_tab(self):
+        """Вкладка модулей"""
+        with dpg.group():
+            dpg.add_text("Available Modules")
+            dpg.add_listbox(
+                tag="modules_list",
+                items=list(self.engine.active_modules.keys()),
+                num_items=15,
+                width=-1
+            )
+            
+            dpg.add_text("Module Information", tag="module_info_title")
             dpg.add_input_text(
-                tag="scan_log", 
-                multiline=True, 
+                tag="module_info",
+                multiline=True,
                 height=200,
                 readonly=True,
                 width=-1
             )
-            
-            # Обновляем описание профиля
-            self.update_profile_description()
     
-    def setup_results_tab(self):
-        """Вкладка детальных результатов"""
-        with dpg.tab(label="📊 Результаты"):
-            with dpg.group(horizontal=True):
-                # Дерево обнаруженных узлов
-                with dpg.child_window(width=400, tag="nodes_tree_window"):
-                    dpg.add_text("Обнаруженные узлы:")
-                    dpg.add_tree_node(
-                        label="Корневые цели",
-                        tag="root_nodes",
-                        default_open=True
-                    )
-                
-                # Детальная информация
-                with dpg.child_window(tag="details_window"):
-                    dpg.add_text("Детальная информация:", tag="details_title")
-                    dpg.add_input_text(
-                        tag="detailed_results",
-                        multiline=True,
-                        height=300,
-                        readonly=True,
-                        width=-1
-                    )
-            
-            # Статистика
-            with dpg.collapsing_header(label="📈 Статистика"):
-                with dpg.group(horizontal=True):
-                    with dpg.child_window(width=300):
-                        dpg.add_text("Общая статистика:")
-                        dpg.add_text("Целей: 0", tag="stats_targets")
-                        dpg.add_text("Найдено узлов: 0", tag="stats_nodes")
-                        dpg.add_text("Завершено сканирований: 0", tag="stats_scans")
-                        dpg.add_text("Активных модулей: 0", tag="stats_modules")
-                        dpg.add_separator()
-                        dpg.add_text("Время работы: 00:00:00", tag="stats_uptime")
+    def _switch_tab(self, tab_name: str):
+        """Переключение вкладок"""
+        dpg.set_value("main_tabs", tab_name)
     
-    def setup_modules_tab(self):
-        """Настройка вкладки управления модулями"""
-        with dpg.tab(label="🔧 Модули"):
-            with dpg.group(horizontal=True):
-                # Список модулей
-                with dpg.child_window(width=400):
-                    dpg.add_text("Доступные модули:")
-                    dpg.add_listbox(
-                        items=list(self.engine.active_modules.keys()),
-                        tag="modules_list",
-                        num_items=15,
-                        callback=self.on_module_select
-                    )
-                    with dpg.group(horizontal=True):
-                        dpg.add_button(label="Обновить", callback=self.refresh_modules_list)
-                
-                # Информация о модуле
-                with dpg.child_window(tag="module_info_window"):
-                    dpg.add_text("Информация о модуле:", tag="module_info_title")
-                    dpg.add_text("Выберите модуль из списка", tag="module_info_content")
-    
-    def setup_theme(self):
-        """Настройка темы оформления"""
-        with dpg.theme() as global_theme:
-            with dpg.theme_component(dpg.mvAll):
-                dpg.add_theme_color(dpg.mvThemeCol_FrameBg, (40, 40, 40), category=dpg.mvThemeCat_Core)
-                dpg.add_theme_color(dpg.mvThemeCol_Button, (60, 60, 80), category=dpg.mvThemeCat_Core)
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, (80, 80, 100), category=dpg.mvThemeCat_Core)
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, (100, 100, 120), category=dpg.mvThemeCat_Core)
-        
-        dpg.bind_theme(global_theme)
-    
-    def setup_callbacks(self):
-        """Настройка callback функций"""
-        # Регистрация callback для обновления UI в реальном времени
-        self.engine.register_callback('node_discovered', self.on_node_discovered)
-        self.engine.register_callback('scan_completed', self.on_scan_completed)
-        self.engine.register_callback('task_failed', self.on_task_failed)
-        self.engine.register_callback('vulnerability_found', self.on_vulnerability_found)
-    
-    def handle_engine_event(self, event_type: str, data: Any = None):
-        """Обработчик событий от движка"""
-        try:
-            if event_type in ['node_discovered', 'node_added', 'task_completed']:
-                self.update_graph_from_engine()
-                self.update_statistics()
-            elif event_type == 'scan_started':
-                self.on_scan_started(data)
-            elif event_type == 'scan_completed':
-                self.on_scan_completed(data)
-            elif event_type == 'task_failed':
-                self.on_task_failed(data)
-            elif event_type == 'vulnerability_found':
-                self.on_vulnerability_found(data)
-            elif event_type == 'exploitation_success':
-                self.on_exploitation_success(data)
-            elif event_type == 'progress_update':
-                self.on_progress_update(data)
-        except Exception as e:
-            self.logger.error(f"Ошибка обработки события: {e}")
-    
-    def on_profile_change(self):
-        """Обработчик смены профиля"""
-        profile = dpg.get_value("scan_profile")
-        if self.engine.set_scan_profile(profile):
-            # Обновляем UI элементы
-            profile_info = self.engine.get_current_profile_info()
-            dpg.set_value("rate_limit", profile_info.get('rate_limit', 10))
-            dpg.set_value("max_depth", profile_info.get('max_depth', 5))
-            
-            self.update_profile_description()
-            self.add_to_log(f"📋 Установлен профиль: {profile}")
-    
-    def update_profile_description(self):
-        """Обновление описания профиля"""
-        profile = dpg.get_value("scan_profile")
-        profile_info = self.engine.get_current_profile_info()
-        description = profile_info.get('description', 'Нет описания')
-        dpg.set_value("profile_description", f" - {description}")
-    
-    def save_config(self):
-        """Сохранить текущую конфигурацию"""
-        try:
-            # Сохраняем все конфиги через основной config_manager
-            self.engine.config_manager.save_config()
-            self.engine.config_manager.save_profiles()
-            self.engine.config_manager.save_module_configs()
-            self.add_to_log("💾 Все конфигурации сохранены")
-        except Exception as e:
-            self.add_to_log(f"❌ Ошибка сохранения конфигурации: {e}")
+    def _set_profile(self, profile_name: str):
+        """Установка профиля сканирования"""
+        if self.engine.set_scan_profile(profile_name):
+            self.add_to_log(f"Profile set to: {profile_name}")
     
     def start_scan(self):
         """Запуск сканирования"""
         target = dpg.get_value("target_input")
         if not target:
-            self.add_to_log("❌ Ошибка: Введите цель для сканирования")
+            self.add_to_log("❌ Please enter a target")
             return
         
         self.is_scanning = True
-        self.update_ui_state()
+        self._update_ui_state()
         
-        # Добавление цели в движок
+        # Применяем настройки
+        self.engine.rate_limit = dpg.get_value("rate_limit")
+        self.engine.max_depth = dpg.get_value("max_depth")
+        
+        # Запускаем сканирование
         self.engine.add_initial_target(target)
         
-        self.add_to_log(f"🚀 Начато сканирование: {target}")
-        self.add_to_log(f"📋 Профиль: {dpg.get_value('scan_profile')}")
-        dpg.set_value("current_status", "Сканирование...")
+        self.add_to_log(f"🚀 Started scanning: {target}")
+        dpg.set_value("status_text", "Status: Scanning...")
     
     def stop_scan(self):
         """Остановка сканирования"""
         self.engine.stop_engine()
         self.is_scanning = False
-        self.update_ui_state()
-        dpg.set_value("current_status", "Остановлено")
-        self.add_to_log("⏹️ Сканирование остановлено пользователем")
+        self._update_ui_state()
+        dpg.set_value("status_text", "Status: Stopped")
+        self.add_to_log("⏹️ Scan stopped")
     
-    def clear_results(self):
-        """Очистка результатов"""
-        self.graph_view.clear_graph()
-        dpg.set_value("detailed_results", "")
-        dpg.set_value("scan_log", "")
-        self.add_to_log("🧹 Результаты очищены")
-        dpg.set_value("current_status", "Ожидание")
-    
-    def update_ui_state(self):
-        """Обновление состояния UI элементов"""
-        dpg.configure_item("scan_button", enabled=not self.is_scanning)
-        dpg.configure_item("stop_button", enabled=self.is_scanning)
-    
-    def on_node_discovered(self, node):
-        """Callback при обнаружении нового узла"""
-        message = f"🔍 Обнаружен: {node.type.value} -> {node.data}"
-        self.add_to_log(message)
-        self.update_statistics()
-    
-    def on_scan_completed(self, task):
-        """Callback при завершении сканирования"""
-        message = f"✅ Завершено: {task.data}"
-        self.add_to_log(message)
-        self.update_statistics()
-    
-    def on_task_failed(self, data):
-        """Callback при ошибке задачи"""
-        task = data.get('task')
-        error = data.get('error')
-        message = f"❌ Ошибка: {task.data if task else 'Unknown'} - {error}"
-        self.add_to_log(message)
-    
-    def on_vulnerability_found(self, data):
-        """Callback при обнаружении уязвимости"""
-        message = f"🔴 Уязвимость: {data.get('cve', 'Unknown')} на {data.get('target', 'Unknown')}"
-        self.add_to_log(message)
-    
-    def on_exploitation_success(self, data):
-        """Callback при успешной эксплуатации"""
-        message = f"💥 УСПЕШНАЯ ЭКСПЛУАТАЦИЯ: {data.get('access_type', 'Unknown')} доступ к {data.get('target', 'Unknown')}"
-        self.add_to_log(message)
-    
-    def on_scan_started(self, data):
-        """Callback при начале сканирования"""
-        self.add_to_log("🚀 Начато сканирование...")
-    
-    def on_progress_update(self, data):
-        """Callback при обновлении прогресса"""
-        # Можно добавить обновление прогресс-бара
-        pass
+    def _update_ui_state(self):
+        """Обновление состояния UI"""
+        dpg.configure_item("scan_button", show=not self.is_scanning)
+        dpg.configure_item("stop_button", show=self.is_scanning)
     
     def add_to_log(self, message: str):
-        """Добавить сообщение в лог"""
+        """Добавление сообщения в лог"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] {message}\n"
         
-        current_log = dpg.get_value("scan_log")
-        new_log = log_entry + current_log  # Новые сообщения сверху
-        
-        dpg.set_value("scan_log", new_log)
+        current_log = dpg.get_value("activity_log")
+        new_log = log_entry + (current_log or "")
+        dpg.set_value("activity_log", new_log)
     
-    def update_graph_from_engine(self):
-        """Обновить граф на основе данных движка"""
-        self.graph_view.clear_graph()
+    def update_graph(self):
+        """Обновление графа"""
+        self.graph.clear()
         
-        # Создаем маппинг данных для связей
+        # Добавляем узлы из движка
         node_map = {}
-        
-        # Добавляем все узлы в граф
         for node in self.engine.discovered_nodes:
-            node_id = self.graph_view.add_node({
+            node_id = self.graph.add_node({
                 'type': node.type.value,
                 'data': node.data,
-                'depth': node.depth,
-                'module': node.module,
-                'ports': node.ports,
-                'metadata': node.metadata,
-                'vulnerability_data': node.vulnerability_data,
-                'exploit_data': node.exploit_data
+                'depth': node.depth
             })
             node_map[node.node_id] = node_id
         
-        # Создаем связи между узлами
+        # Добавляем связи
         for node in self.engine.discovered_nodes:
             if node.source and node.source in node_map:
-                source_id = node_map.get(node.source)
-                target_id = node_map.get(node.node_id)
-                if source_id is not None and target_id is not None:
-                    self.graph_view.add_edge(source_id, target_id)
+                self.graph.add_edge(
+                    node_map[node.source],
+                    node_map[node.node_id]
+                )
         
-        self.graph_view.update_graph()
-        self.update_detailed_results()
+        # Перерисовываем граф
+        dpg.delete_item("graph_canvas", children_only=True)
+        self.graph.draw_graph(800, 600)
     
-    def update_detailed_results(self):
-        """Обновить детальную информацию"""
-        results_text = "Обнаруженные узлы:\n\n"
-        
-        for node in self.engine.discovered_nodes:
-            depth_indent = "  " * node.depth
-            node_type = getattr(node.type, 'value', str(node.type))
-            results_text += f"{depth_indent}• {node_type}: {node.data}\n"
-            
-            if node.ports:
-                results_text += f"{depth_indent}  Порты: {node.ports}\n"
-            
-            if node.metadata:
-                results_text += f"{depth_indent}  Метаданные: {node.metadata}\n"
-            
-            if node.vulnerability_data:
-                results_text += f"{depth_indent}  Уязвимость: {node.vulnerability_data}\n"
-            
-            if node.exploit_data:
-                results_text += f"{depth_indent}  Эксплуатация: {node.exploit_data}\n"
-        
-        dpg.set_value("detailed_results", results_text)
-    
-    def update_statistics(self):
-        """Обновление статистики"""
-        stats = self.engine.get_statistics()
-        dpg.set_value("stats_targets", f"Целей: {stats.get('total_scans', 0)}")
-        dpg.set_value("stats_nodes", f"Найдено узлов: {stats.get('discovered_nodes', 0)}")
-        dpg.set_value("stats_scans", f"Завершено сканирований: {stats.get('successful_scans', 0)}")
-        dpg.set_value("stats_modules", f"Активных модулей: {stats.get('active_modules', 0)}")
-    
-    def refresh_modules_list(self):
-        """Обновление списка модулей"""
-        module_names = list(self.engine.active_modules.keys())
-        dpg.configure_item("modules_list", items=module_names)
-        self.add_to_log("📋 Список модулей обновлен")
-    
-    def on_module_select(self, sender, app_data):
-        """Обработка выбора модуля"""
-        selected_module = app_data
-        module_info = f"""
-Модуль: {selected_module}
-Статус: ✅ Загружен
-        """
-        dpg.set_value("module_info_content", module_info)
+    def clear_graph(self):
+        """Очистка графа"""
+        self.graph.clear()
+        dpg.delete_item("graph_canvas", children_only=True)
     
     def export_results(self):
         """Экспорт результатов"""
-        filename = f"rapidrecon_scan_{int(time.time())}.json"
+        filename = f"rapidrecon_export_{int(time.time())}.json"
         self.engine.export_results(filename)
-        self.add_to_log(f"💾 Результаты экспортированы в: {filename}")
+        self.add_to_log(f"💾 Results exported to: {filename}")
     
     def export_graph(self):
         """Экспорт графа"""
-        filename = self.graph_view.export_graph()
-        self.add_to_log(f"🌐 Граф экспортирован в: {filename}")
+        # Простая реализация экспорта графа
+        graph_data = {
+            'nodes': list(self.graph.nodes.values()),
+            'edges': self.graph.edges
+        }
+        filename = f"rapidrecon_graph_{int(time.time())}.json"
+        with open(filename, 'w') as f:
+            json.dump(graph_data, f, indent=2)
+        self.add_to_log(f"🌐 Graph exported to: {filename}")
     
-    def update_rate_limit(self):
-        """Обновление ограничения скорости"""
-        rate = dpg.get_value("rate_limit")
-        self.engine.rate_limit = rate
-        self.add_to_log(f"⚡ Установлена скорость: {rate} пакетов/секунду")
+    def handle_engine_event(self, event_type: str, data: Any = None):
+        """Обработчик событий движка"""
+        try:
+            if event_type in ['node_discovered', 'node_added']:
+                self.add_to_log(f"🔍 Discovered: {data.data if data else 'Unknown'}")
+                self.update_graph()
+            elif event_type == 'scan_completed':
+                self.add_to_log("✅ Scan completed")
+                self.is_scanning = False
+                self._update_ui_state()
+                dpg.set_value("status_text", "Status: Completed")
+            elif event_type == 'vulnerability_found':
+                self.add_to_log(f"🔴 Vulnerability: {data.get('cve', 'Unknown')}")
+            
+            # Обновляем статистику
+            self._update_statistics()
+            
+        except Exception as e:
+            self.logger.error(f"Error handling engine event: {e}")
     
-    def update_speed_profile(self):
-        """Обновление профиля скорости"""
-        profile = dpg.get_value("speed_profile")
-        self.add_to_log(f"🎛️ Установлен профиль: {profile}")
-    
-    def update_max_depth(self):
-        """Обновление максимальной глубины"""
-        depth = dpg.get_value("max_depth")
-        self.engine.max_depth = depth
-        self.add_to_log(f"📏 Установлена глубина: {depth}")
-    
-    def show_settings(self):
-        """Показать настройки"""
-        self.add_to_log("⚙️ Открыты настройки")
-    
-    def show_module_manager(self):
-        """Показать менеджер модулей"""
-        self.add_to_log("🔧 Открыт менеджер модулей")
-    
-    def show_about(self):
-        """Показать информацию о программе"""
-        about_text = """
-RapidRecon v1.0.0
-
-Мощный инструмент для автоматизированной 
-разведки и сканирования сетевой инфраструктуры.
-
-Разработано с ❤️ для сообщества безопасности.
-"""
-        self.add_to_log("ℹ️ " + about_text.replace('\n', ' '))
-    
-    def quick_scan(self):
-        """Быстрое сканирование"""
-        dpg.set_value("scan_profile", "stealth")
-        self.on_profile_change()
-        dpg.set_value("max_depth", 2)
-        self.add_to_log("🚀 Настроено быстрое сканирование")
-    
-    def deep_scan(self):
-        """Глубокое сканирование"""
-        dpg.set_value("scan_profile", "aggressive")
-        self.on_profile_change()
-        dpg.set_value("max_depth", 5)
-        self.add_to_log("🔍 Настроено глубокое сканирование")
-    
-    def custom_scan(self):
-        """Кастомное сканирование"""
-        self.add_to_log("🎛️ Открыты настройки кастомного сканирования")
-    
-    def exit_app(self):
-        """Выход из приложения"""
-        if self.is_scanning:
-            self.stop_scan()
-        self.destroy()
+    def _update_statistics(self):
+        """Обновление статистики"""
+        stats = self.engine.get_statistics()
+        dpg.set_value("stat_nodes", f"Nodes: {stats.get('discovered_nodes', 0)}")
+        dpg.set_value("stat_targets", f"Targets: {stats.get('total_scans', 0)}")
+        dpg.set_value("stat_vulns", f"Vulnerabilities: {stats.get('vulnerabilities_found', 0)}")
+        dpg.set_value("stat_exploits", f"Exploits: {stats.get('exploits_successful', 0)}")
     
     def run(self):
-        """Запуск GUI (альтернатива show для совместимости)"""
-        self.show()
-    
-    def show(self):
-        """Показать окно"""
-        dpg.create_viewport(
-            title='RapidRecon v1.0.0', 
-            width=1400, 
-            height=900,
-            min_width=1000,
-            min_height=700
-        )
+        """Запуск GUI"""
         dpg.setup_dearpygui()
         dpg.show_viewport()
-        dpg.set_primary_window("Primary Window", True)
+        dpg.set_primary_window("main_window", True)
         
-        # Инициализация данных
-        self.refresh_modules_list()
-        self.update_ui_state()
-        self.update_profile_description()
+        # Главный цикл
+        while dpg.is_dearpygui_running():
+            # Периодическое обновление статистики
+            if self.is_scanning:
+                self._update_statistics()
+            dpg.render_dearpygui_frame()
         
-        dpg.start_dearpygui()
-    
-    def destroy(self):
-        """Очистка"""
         dpg.destroy_context()
 
-# Пример использования
-if __name__ == "__main__":
-    # Демонстрация работы интерфейса
-    from core.engine import PropagationEngine
-    from core.module_manager import ModuleManager
-    
-    engine = PropagationEngine()
-    module_manager = ModuleManager()
-    
-    app = MainWindow(engine, module_manager)
-    app.show()
+# Сохраняем как основной MainWindow для совместимости
+MainWindow = ObsidianMainWindow
