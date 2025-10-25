@@ -313,7 +313,7 @@ class GraphVisualization:
         self.node_counter = 0
         self.selected_node = None
 
-class ObsidianMainWindow:
+class MainWindow:
     """
     Главный интерфейс RapidRecon в стиле Obsidian с полным функционалом
     """
@@ -971,9 +971,4 @@ class ObsidianMainWindow:
         
         self.add_to_log(f"🚀 Quick scan started for: {target}")
         
-        # Устанавливаем цель
-        self.engine.set_targets([target])
-        
-        # Запускаем сканирование с текущими настройками
-        scan_profile = dpg.get_value("scan_level").split(" ")[-1].lower()
-        self._set
+        # Устанавливаем
