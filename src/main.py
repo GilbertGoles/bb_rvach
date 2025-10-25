@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from core.engine import PropagationEngine
 from core.module_manager import ModuleManager
-from core.config_manager import ConfigManager
+from core.config import ConfigManager
 from gui.main_window import MainWindow
 
 # Импорт модулей
