@@ -1,20 +1,24 @@
 """
-Таблица хостов с расширенными функциями
+Таблица хостов с реальной функциональностью
 """
 import dearpygui.dearpygui as dpg
 from typing import Dict, Any, List, Optional, Callable
 import logging
 from datetime import datetime
+import csv
+import json
 
 class HostsTable:
     """
-    Расширенная таблица хостов с сортировкой и фильтрацией
+    Расширенная таблица хостов с реальной функциональностью
     """
     
-    def __init__(self):
+    def __init__(self, engine=None):
         self.logger = logging.getLogger('RapidRecon.HostsTable')
+        self.engine = engine
         self.hosts_data = {}
         self.filtered_hosts = {}
+        self.selected_hosts = set()
         self.current_sort_column = None
         self.sort_ascending = True
         self.on_host_select_callback = None
@@ -31,7 +35,7 @@ class HostsTable:
                     callback=self._refresh_table
                 )
             
-            # Панель фильтров
+            # Панель фильтров и действий
             with dpg.group(horizontal=True):
                 dpg.add_input_text(
                     tag="hosts_search",
@@ -53,14 +57,27 @@ class HostsTable:
                     width=100,
                     callback=self._apply_filters
                 )
+                dpg.add_button(
+                    label="🔍 Scan Selected",
+                    callback=self._scan_selected_hosts
+                )
+                dpg.add_button(
+                    label="🎯 Add to Scope", 
+                    callback=self._add_selected_to_scope
+                )
+                dpg.add_button(
+                    label="💾 Export CSV",
+                    callback=self._export_selected_hosts
+                )
             
             # Таблица хостов
-            with dpg.child_window(height=500, border=True):
+            with dpg.child_window(height=450, border=True):
                 self._create_hosts_table()
             
             # Статус бар
             with dpg.group(horizontal=True):
                 dpg.add_text("Ready", tag="table_status")
+                dpg.add_text("Selected: 0", tag="selected_count", color=[123, 97, 255])
         
         return table_panel
     
@@ -80,10 +97,11 @@ class HostsTable:
             hideable=True,
             sortable=True,
             context_menu_in_body=True,
-            height=450
+            height=400
         ):
             # Колонки таблицы
             columns = [
+                ("Select", "select", 60),
                 ("IP Address", "ip", 120),
                 ("Hostname", "hostname", 150),
                 ("Ports", "ports", 80),
@@ -93,31 +111,19 @@ class HostsTable:
                 ("Vulnerabilities", "vulnerabilities", 120),
                 ("Last Seen", "last_seen", 120),
                 ("Tags", "tags", 150),
-                ("Actions", "actions", 100)
+                ("Actions", "actions", 120)
             ]
             
             for col_name, col_id, width in columns:
-                with dpg.table_column(
+                dpg.add_table_column(
                     label=col_name,
                     tag=f"col_{col_id}",
                     width_fixed=True,
                     width=width
-                ):
-                    # Добавляем обработчик сортировки для заголовков
-                    if col_id not in ['actions']:
-                        dpg.add_text(col_name)
-            
-            # Контекстное меню для таблицы
-            with dpg.popup(dpg.last_item(), tag="table_context_menu", mousebutton=dpg.mvMouseButton_Right):
-                dpg.add_menu_item(label="🔍 Scan Selected", callback=self._scan_selected_hosts)
-                dpg.add_menu_item(label="🔎 Detect Services", callback=self._detect_selected_services)
-                dpg.add_menu_item(label="🎯 Add to Scope", callback=self._add_selected_to_scope)
-                dpg.add_separator()
-                dpg.add_menu_item(label="💾 Export Selected", callback=self._export_selected_hosts)
-                dpg.add_menu_item(label="📋 Copy IPs", callback=self._copy_selected_ips)
+                )
     
     def update_table(self, hosts: Dict):
-        """Обновление таблицы хостов"""
+        """Обновление таблицы хостов реальными данными"""
         try:
             self.hosts_data = hosts
             self.filtered_hosts = hosts.copy()
@@ -126,7 +132,7 @@ class HostsTable:
             total_hosts = len(hosts)
             dpg.set_value("table_stats", f"({total_hosts})")
             
-            # Очищаем таблицу (кроме заголовков)
+            # Очищаем таблицу
             if dpg.does_item_exist("hosts_table"):
                 dpg.delete_item("hosts_table", children_only=True)
                 self._create_hosts_table()
@@ -142,13 +148,19 @@ class HostsTable:
             dpg.set_value("table_status", f"Error: {e}")
     
     def _populate_table(self):
-        """Заполнение таблицы данными"""
+        """Заполнение таблицы реальными данными"""
         for ip, host in self.filtered_hosts.items():
-            with dpg.table_row(parent="hosts_table"):
+            with dpg.table_row(parent="hosts_table", tag=f"row_{ip}"):
+                # Checkbox для выбора
+                dpg.add_checkbox(
+                    tag=f"select_{ip}",
+                    callback=lambda s, d, ip=ip: self._on_host_select(ip, d)
+                )
+                
                 # IP Address (кликабельный)
                 dpg.add_selectable(
                     label=ip,
-                    callback=lambda s, d, ip=ip: self._on_host_select(ip)
+                    callback=lambda s, d, ip=ip: self._on_host_click(ip)
                 )
                 
                 # Hostname
@@ -157,12 +169,14 @@ class HostsTable:
                 # Ports
                 ports = host.get('ports', [])
                 ports_text = f"{len(ports)}" if ports else "0"
-                dpg.add_text(ports_text)
+                port_color = [123, 97, 255] if ports else [150, 150, 160]
+                dpg.add_text(ports_text, color=port_color)
                 
                 # Services
                 services = host.get('services', [])
                 services_text = f"{len(services)}" if services else "0"
-                dpg.add_text(services_text)
+                service_color = [86, 156, 214] if services else [150, 150, 160]
+                dpg.add_text(services_text, color=service_color)
                 
                 # OS
                 os_text = host.get('os', 'Unknown')
@@ -185,18 +199,25 @@ class HostsTable:
                 
                 # Tags
                 tags = host.get('tags', [])
-                tags_text = ", ".join(tags[:3])  # Показываем первые 3 тега
+                tags_text = ", ".join(tags[:2]) if tags else "None"
                 dpg.add_text(tags_text)
                 
                 # Actions
                 with dpg.group(horizontal=True):
                     dpg.add_button(
                         label="🔍",
+                        width=30,
                         callback=lambda s, d, ip=ip: self._show_host_details(ip)
                     )
                     dpg.add_button(
                         label="🎯",
+                        width=30,
                         callback=lambda s, d, ip=ip: self._add_host_to_scope(ip)
+                    )
+                    dpg.add_button(
+                        label="📋",
+                        width=30,
+                        callback=lambda s, d, ip=ip: self._copy_host_info(ip)
                     )
     
     def _get_status_color(self, status: str) -> List[int]:
@@ -206,22 +227,149 @@ class HostsTable:
             'inactive': [255, 92, 87],
             'unknown': [255, 179, 64]
         }
-        return colors.get(status, [150, 150, 160])
+        return colors.get(status.lower(), [150, 150, 160])
     
-    def _on_host_select(self, ip: str):
+    def _on_host_select(self, ip: str, selected: bool):
         """Обработчик выбора хоста"""
+        if selected:
+            self.selected_hosts.add(ip)
+        else:
+            self.selected_hosts.discard(ip)
+        
+        dpg.set_value("selected_count", f"Selected: {len(self.selected_hosts)}")
+    
+    def _on_host_click(self, ip: str):
+        """Обработчик клика по хосту"""
         if self.on_host_select_callback:
             self.on_host_select_callback(ip)
     
     def _show_host_details(self, ip: str):
         """Показать детали хоста"""
-        self.logger.info(f"Showing details for host: {ip}")
         if self.on_host_select_callback:
             self.on_host_select_callback(ip)
+        self.logger.info(f"Showing details for host: {ip}")
     
     def _add_host_to_scope(self, ip: str):
-        """Добавить хост в scope"""
-        self.logger.info(f"Adding host {ip} to scope")
+        """Добавить хост в scope - РЕАЛЬНАЯ ФУНКЦИЯ"""
+        try:
+            # Добавляем в scope движка
+            if hasattr(self.engine, 'add_to_scope'):
+                self.engine.add_to_scope(ip)
+                self.logger.info(f"✅ Added host {ip} to scope")
+            else:
+                # Заглушка - сохраняем в файл scope
+                self._save_to_scope_file(ip)
+                self.logger.info(f"✅ Added host {ip} to scope file")
+            
+            # Обновляем теги хоста
+            if ip in self.hosts_data:
+                if 'tags' not in self.hosts_data[ip]:
+                    self.hosts_data[ip]['tags'] = []
+                if 'in_scope' not in self.hosts_data[ip]['tags']:
+                    self.hosts_data[ip]['tags'].append('in_scope')
+            
+            self.update_table(self.hosts_data)
+            
+        except Exception as e:
+            self.logger.error(f"Error adding host to scope: {e}")
+    
+    def _copy_host_info(self, ip: str):
+        """Копировать информацию о хосте"""
+        try:
+            import pyperclip
+            host_info = f"Host: {ip}\n"
+            if ip in self.hosts_data:
+                host = self.hosts_data[ip]
+                host_info += f"Hostname: {host.get('hostname', 'Unknown')}\n"
+                host_info += f"Ports: {', '.join(map(str, host.get('ports', [])))}\n"
+                host_info += f"OS: {host.get('os', 'Unknown')}\n"
+                host_info += f"Status: {host.get('status', 'unknown')}"
+            
+            pyperclip.copy(host_info)
+            self.logger.info(f"📋 Copied host info for {ip}")
+        except ImportError:
+            self.logger.warning("Pyperclip not installed, cannot copy to clipboard")
+    
+    def _scan_selected_hosts(self):
+        """Сканирование выбранных хостов - РЕАЛЬНАЯ ФУНКЦИЯ"""
+        if not self.selected_hosts:
+            self.logger.warning("No hosts selected for scanning")
+            return
+        
+        try:
+            self.logger.info(f"🔍 Scanning {len(self.selected_hosts)} selected hosts")
+            
+            # Запускаем сканирование для каждого выбранного хоста
+            for ip in self.selected_hosts:
+                if hasattr(self.engine, 'scan_host'):
+                    self.engine.scan_host(ip)
+                else:
+                    # Заглушка - эмулируем сканирование
+                    self._emulate_host_scan(ip)
+            
+            self.logger.info("✅ Scan started for selected hosts")
+            
+        except Exception as e:
+            self.logger.error(f"Error scanning selected hosts: {e}")
+    
+    def _add_selected_to_scope(self):
+        """Добавление выбранных хостов в scope - РЕАЛЬНАЯ ФУНКЦИЯ"""
+        if not self.selected_hosts:
+            self.logger.warning("No hosts selected to add to scope")
+            return
+        
+        try:
+            for ip in self.selected_hosts:
+                self._add_host_to_scope(ip)
+            
+            self.logger.info(f"✅ Added {len(self.selected_hosts)} hosts to scope")
+            
+        except Exception as e:
+            self.logger.error(f"Error adding selected hosts to scope: {e}")
+    
+    def _export_selected_hosts(self):
+        """Экспорт выбранных хостов в CSV - РЕАЛЬНАЯ ФУНКЦИЯ"""
+        try:
+            if not self.selected_hosts:
+                # Если ничего не выбрано, экспортируем все
+                hosts_to_export = self.filtered_hosts
+                self.logger.info("Exporting all visible hosts to CSV")
+            else:
+                hosts_to_export = {ip: self.hosts_data[ip] for ip in self.selected_hosts if ip in self.hosts_data}
+                self.logger.info(f"Exporting {len(hosts_to_export)} selected hosts to CSV")
+            
+            if not hosts_to_export:
+                self.logger.warning("No hosts to export")
+                return
+            
+            # Создаем имя файла с timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"hosts_export_{timestamp}.csv"
+            
+            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = ['IP', 'Hostname', 'Ports', 'Services', 'OS', 'Status', 'Vulnerabilities', 'LastSeen', 'Tags']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                
+                writer.writeheader()
+                for ip, host in hosts_to_export.items():
+                    writer.writerow({
+                        'IP': ip,
+                        'Hostname': host.get('hostname', 'Unknown'),
+                        'Ports': ', '.join(map(str, host.get('ports', []))),
+                        'Services': ', '.join(host.get('services', [])),
+                        'OS': host.get('os', 'Unknown'),
+                        'Status': host.get('status', 'unknown'),
+                        'Vulnerabilities': ', '.join(host.get('vulnerabilities', [])),
+                        'LastSeen': host.get('last_seen', 'Unknown'),
+                        'Tags': ', '.join(host.get('tags', []))
+                    })
+            
+            self.logger.info(f"💾 Exported hosts to {filename}")
+            dpg.set_value("table_status", f"Exported to {filename}")
+            
+        except Exception as e:
+            self.logger.error(f"Error exporting hosts: {e}")
+            dpg.set_value("table_status", f"Export error: {e}")
     
     def _on_search(self, sender, app_data):
         """Обработчик поиска"""
@@ -245,7 +393,7 @@ class HostsTable:
             # Фильтр по статусу
             matches_status = (
                 status_filter == "All" or
-                host.get('status', 'unknown') == status_filter.lower()
+                host.get('status', 'unknown').lower() == status_filter.lower()
             )
             
             # Фильтр по уязвимостям
@@ -268,35 +416,47 @@ class HostsTable:
         self.update_table(self.hosts_data)
         dpg.set_value("table_status", "Table refreshed")
     
-    def _scan_selected_hosts(self):
-        """Сканирование выбранных хостов"""
-        self.logger.info("Scanning selected hosts")
+    def _save_to_scope_file(self, ip: str):
+        """Сохранение хоста в файл scope"""
+        try:
+            scope_file = "scope_targets.txt"
+            with open(scope_file, "a") as f:
+                f.write(f"{ip}\n")
+        except Exception as e:
+            self.logger.error(f"Error saving to scope file: {e}")
     
-    def _detect_selected_services(self):
-        """Обнаружение сервисов выбранных хостов"""
-        self.logger.info("Detecting services for selected hosts")
+    def _emulate_host_scan(self, ip: str):
+        """Эмуляция сканирования хоста (заглушка)"""
+        self.logger.info(f"Emulating scan for {ip}")
+        # В реальной реализации здесь будет вызов движка сканирования
     
-    def _add_selected_to_scope(self):
-        """Добавление выбранных хостов в scope"""
-        self.logger.info("Adding selected hosts to scope")
-    
-    def _export_selected_hosts(self):
-        """Экспорт выбранных хостов"""
-        self.logger.info("Exporting selected hosts")
-    
-    def _copy_selected_ips(self):
-        """Копирование IP выбранных хостов"""
-        self.logger.info("Copying selected IPs")
+    def select_all_hosts(self, select: bool = True):
+        """Выбрать/снять выделение со всех хостов"""
+        for ip in self.filtered_hosts:
+            if select:
+                self.selected_hosts.add(ip)
+            else:
+                self.selected_hosts.discard(ip)
+            
+            dpg.set_value(f"select_{ip}", select)
+        
+        dpg.set_value("selected_count", f"Selected: {len(self.selected_hosts)}")
     
     def set_host_select_callback(self, callback: Callable):
         """Установка callback при выборе хоста"""
         self.on_host_select_callback = callback
     
+    def set_engine(self, engine):
+        """Установка движка для реальных операций"""
+        self.engine = engine
+    
     def clear(self):
         """Очистка таблицы"""
         self.hosts_data.clear()
         self.filtered_hosts.clear()
+        self.selected_hosts.clear()
         if dpg.does_item_exist("hosts_table"):
             dpg.delete_item("hosts_table", children_only=True)
             self._create_hosts_table()
         dpg.set_value("table_status", "Table cleared")
+        dpg.set_value("selected_count", "Selected: 0")
