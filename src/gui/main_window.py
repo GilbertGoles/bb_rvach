@@ -945,8 +945,7 @@ class MainWindow:
                 tag="discovered_targets_list",
                 items=[],
                 num_items=15,
-                width=-1,
-                height=400
+                width=-1
             )
             
             with dpg.group(horizontal=True):
