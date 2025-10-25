@@ -971,4 +971,7 @@ class MainWindow:
         
         self.add_to_log(f"🚀 Quick scan started for: {target}")
         
-        # Устанавливаем
+        # Устанавливаем цель
+        self.engine.set_targets([target])
+        
+        # Запускаем сканирование с текущими настрой
