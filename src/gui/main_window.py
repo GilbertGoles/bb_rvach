@@ -963,4 +963,17 @@ class ObsidianMainWindow:
         self.add_to_log(f"🎛️ Scan intensity: {scan_level}")
     
     def quick_start_scan(self):
-        """Быстрый запуск сканирования из боковой
+        """Быстрый запуск сканирования из боковой панели"""
+        target = dpg.get_value("quick_target_input")
+        if not target:
+            self.add_to_log("❌ Please enter a target first!")
+            return
+        
+        self.add_to_log(f"🚀 Quick scan started for: {target}")
+        
+        # Устанавливаем цель
+        self.engine.set_targets([target])
+        
+        # Запускаем сканирование с текущими настройками
+        scan_profile = dpg.get_value("scan_level").split(" ")[-1].lower()
+        self._set
