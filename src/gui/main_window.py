@@ -213,6 +213,7 @@ class ObsidianMainWindow:
         self.graph = GraphVisualization()
         self.is_scanning = False
         self.logger = logging.getLogger('RapidRecon.GUI')
+        self.settings_window_open = False
         
         # Инициализация GUI
         self.setup_gui()
@@ -253,6 +254,9 @@ class ObsidianMainWindow:
                     border=False
                 ):
                     self._setup_content_area()
+        
+        # Окно настроек
+        self._setup_settings_window()
         
         # Настройка viewport
         dpg.create_viewport(
@@ -299,9 +303,44 @@ class ObsidianMainWindow:
                 callback=lambda: self._switch_tab("modules_tab")
             )
         
+        # Быстрый запуск сканирования
+        with dpg.collapsing_header(
+            label="⚡ Quick Actions",
+            default_open=True
+        ):
+            dpg.add_text("Target:", color=[150, 150, 160])
+            dpg.add_input_text(
+                tag="quick_target_input",
+                hint="example.com / 192.168.1.1",
+                width=-1
+            )
+            
+            dpg.add_text("Scan Level:", color=[150, 150, 160])
+            dpg.add_combo(
+                tag="scan_level",
+                items=["🚀 Stealth", "⚡ Normal", "💥 Aggressive", "🔥 Full Attack"],
+                default_value="⚡ Normal",
+                width=-1,
+                callback=self._on_scan_level_change
+            )
+            
+            dpg.add_button(
+                label="▶️ Start Scan",
+                tag="quick_scan_button",
+                width=-1,
+                callback=self.quick_start_scan
+            )
+            dpg.add_button(
+                label="⏹️ Stop Scan", 
+                tag="quick_stop_button",
+                width=-1,
+                callback=self.stop_scan,
+                show=False
+            )
+        
         # Профили сканирования
         with dpg.collapsing_header(
-            label="⚡ Scan Profiles",
+            label="📋 Scan Profiles",
             default_open=True
         ):
             profiles = self.engine.get_available_profiles()
@@ -327,7 +366,8 @@ class ObsidianMainWindow:
             dpg.add_separator()
             dpg.add_button(
                 label="⚙️ Settings",
-                width=-1
+                width=-1,
+                callback=self.show_settings
             )
             dpg.add_button(
                 label="📤 Export Data", 
@@ -356,65 +396,61 @@ class ObsidianMainWindow:
     
     def _setup_scan_tab(self):
         """Вкладка управления сканированием"""
-        # Панель быстрого запуска
+        # Основная панель сканирования
         with dpg.group():
-            dpg.add_text("Quick Scan", color=[123, 97, 255])
+            dpg.add_text("Advanced Scan Configuration", color=[123, 97, 255])
+            
             with dpg.group(horizontal=True):
-                dpg.add_input_text(
-                    tag="target_input",
-                    hint="example.com / 192.168.1.1",
-                    width=300
-                )
+                with dpg.child_window(width=400):
+                    dpg.add_text("Target Configuration")
+                    dpg.add_input_text(
+                        tag="target_input",
+                        hint="Enter domain, IP or range...",
+                        width=-1
+                    )
+                    
+                    dpg.add_text("Scan Type")
+                    dpg.add_combo(
+                        tag="scan_type",
+                        items=["Full Reconnaissance", "Subdomain Discovery", "Port Scanning", "Vulnerability Assessment"],
+                        default_value="Full Reconnaissance",
+                        width=-1
+                    )
+                
+                with dpg.child_window(width=400):
+                    dpg.add_text("Performance Settings")
+                    dpg.add_slider_int(
+                        label="Threads",
+                        tag="thread_count",
+                        default_value=10,
+                        min_value=1,
+                        max_value=50
+                    )
+                    dpg.add_slider_int(
+                        label="Timeout (seconds)",
+                        tag="timeout_setting",
+                        default_value=5,
+                        min_value=1,
+                        max_value=30
+                    )
+            
+            # Кнопки управления
+            with dpg.group(horizontal=True):
                 dpg.add_button(
-                    label="Start Scan",
-                    tag="scan_button",
+                    label="🚀 Start Advanced Scan",
+                    tag="adv_scan_button",
                     callback=self.start_scan
                 )
                 dpg.add_button(
-                    label="Stop", 
-                    tag="stop_button",
+                    label="⏹️ Stop Scan", 
+                    tag="adv_stop_button",
                     callback=self.stop_scan,
                     show=False
                 )
-        
-        # Статус и прогресс
-        with dpg.group():
-            dpg.add_text("Status: Ready", tag="status_text")
-            dpg.add_progress_bar(
-                tag="progress_bar",
-                default_value=0.0,
-                width=-1,
-                height=8
-            )
-        
-        # Расширенные настройки
-        with dpg.collapsing_header(label="Advanced Settings"):
-            with dpg.group(horizontal=True):
-                with dpg.child_window(width=300):
-                    dpg.add_slider_int(
-                        label="Rate Limit",
-                        tag="rate_limit",
-                        default_value=self.engine.rate_limit,
-                        min_value=1,
-                        max_value=100
-                    )
-                    dpg.add_slider_int(
-                        label="Max Depth", 
-                        tag="max_depth",
-                        default_value=self.engine.max_depth,
-                        min_value=1,
-                        max_value=10
-                    )
-                
-                with dpg.child_window(width=300):
-                    dpg.add_checkbox(
-                        label="Aggressive Mode",
-                        tag="aggressive_mode"
-                    )
-                    dpg.add_checkbox(
-                        label="Enable Exploitation",
-                        tag="enable_exploitation"
-                    )
+                dpg.add_button(
+                    label="🧹 Clear Results",
+                    callback=self.clear_results
+                )
         
         # Лог в реальном времени
         dpg.add_text("Activity Log")
@@ -431,9 +467,17 @@ class ObsidianMainWindow:
         with dpg.group():
             # Панель управления графом
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Refresh Graph", callback=self.update_graph)
-                dpg.add_button(label="Clear Graph", callback=self.clear_graph)
-                dpg.add_button(label="Export Graph", callback=self.export_graph)
+                dpg.add_button(label="🔄 Refresh Graph", callback=self.update_graph)
+                dpg.add_button(label="🧹 Clear Graph", callback=self.clear_graph)
+                dpg.add_button(label="💾 Export Graph", callback=self.export_graph)
+                dpg.add_text("Zoom:")
+                dpg.add_slider_float(
+                    tag="graph_zoom",
+                    default_value=1.0,
+                    min_value=0.5,
+                    max_value=2.0,
+                    width=100
+                )
             
             # Область графа
             with dpg.child_window(
@@ -492,6 +536,85 @@ class ObsidianMainWindow:
                 width=-1
             )
     
+    def _setup_settings_window(self):
+        """Окно настроек"""
+        with dpg.window(
+            tag="settings_window",
+            label="Settings",
+            width=600,
+            height=500,
+            show=False,
+            pos=[100, 100]
+        ):
+            with dpg.tab_bar():
+                # Вкладка общего
+                with dpg.tab(label="General"):
+                    dpg.add_text("General Settings")
+                    dpg.add_input_text(
+                        tag="settings_scan_dir",
+                        label="Scan Directory",
+                        default_value="./scans/",
+                        width=-1
+                    )
+                    dpg.add_checkbox(
+                        tag="settings_auto_save",
+                        label="Auto-save results",
+                        default_value=True
+                    )
+                    dpg.add_checkbox(
+                        tag="settings_verbose",
+                        label="Verbose logging",
+                        default_value=False
+                    )
+                
+                # Вкладка сканирования
+                with dpg.tab(label="Scanning"):
+                    dpg.add_text("Scanning Settings")
+                    dpg.add_slider_int(
+                        tag="settings_default_threads",
+                        label="Default Threads",
+                        default_value=10,
+                        min_value=1,
+                        max_value=100
+                    )
+                    dpg.add_slider_int(
+                        tag="settings_default_timeout",
+                        label="Default Timeout (s)",
+                        default_value=5,
+                        min_value=1,
+                        max_value=30
+                    )
+                    dpg.add_checkbox(
+                        tag="settings_follow_redirects",
+                        label="Follow Redirects",
+                        default_value=True
+                    )
+                
+                # Вкладка модулей
+                with dpg.tab(label="Modules"):
+                    dpg.add_text("Module Settings")
+                    dpg.add_checkbox(
+                        tag="settings_auto_load",
+                        label="Auto-load modules",
+                        default_value=True
+                    )
+                    dpg.add_checkbox(
+                        tag="settings_auto_update",
+                        label="Auto-update modules",
+                        default_value=False
+                    )
+            
+            # Кнопки настроек
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="💾 Save Settings",
+                    callback=self.save_settings
+                )
+                dpg.add_button(
+                    label="❌ Close",
+                    callback=lambda: dpg.hide_item("settings_window")
+                )
+    
     def _switch_tab(self, tab_name: str):
         """Переключение вкладок"""
         dpg.set_value("main_tabs", tab_name)
@@ -499,27 +622,56 @@ class ObsidianMainWindow:
     def _set_profile(self, profile_name: str):
         """Установка профиля сканирования"""
         if self.engine.set_scan_profile(profile_name):
-            self.add_to_log(f"Profile set to: {profile_name}")
+            self.add_to_log(f"📋 Profile set to: {profile_name}")
     
-    def start_scan(self):
-        """Запуск сканирования"""
-        target = dpg.get_value("target_input")
+    def _on_scan_level_change(self):
+        """Обработчик изменения уровня сканирования"""
+        scan_level = dpg.get_value("scan_level")
+        level_map = {
+            "🚀 Stealth": "stealth",
+            "⚡ Normal": "normal", 
+            "💥 Aggressive": "aggressive",
+            "🔥 Full Attack": "aggressive"
+        }
+        profile = level_map.get(scan_level, "normal")
+        self._set_profile(profile)
+        self.add_to_log(f"🎛️ Scan level: {scan_level}")
+    
+    def quick_start_scan(self):
+        """Быстрый запуск сканирования из боковой панели"""
+        target = dpg.get_value("quick_target_input")
         if not target:
-            self.add_to_log("❌ Please enter a target")
+            self.add_to_log("❌ Please enter a target in the sidebar")
             return
         
+        # Устанавливаем уровень сканирования
+        self._on_scan_level_change()
+        
+        self.start_scan_with_target(target)
+    
+    def start_scan_with_target(self, target: str):
+        """Запуск сканирования с указанной целью"""
         self.is_scanning = True
         self._update_ui_state()
         
         # Применяем настройки
-        self.engine.rate_limit = dpg.get_value("rate_limit")
-        self.engine.max_depth = dpg.get_value("max_depth")
+        self.engine.rate_limit = dpg.get_value("rate_limit") if dpg.does_item_exist("rate_limit") else 10
+        self.engine.max_depth = dpg.get_value("max_depth") if dpg.does_item_exist("max_depth") else 5
         
         # Запускаем сканирование
         self.engine.add_initial_target(target)
         
         self.add_to_log(f"🚀 Started scanning: {target}")
         dpg.set_value("status_text", "Status: Scanning...")
+    
+    def start_scan(self):
+        """Запуск сканирования из основной вкладки"""
+        target = dpg.get_value("target_input")
+        if not target:
+            self.add_to_log("❌ Please enter a target")
+            return
+        
+        self.start_scan_with_target(target)
     
     def stop_scan(self):
         """Остановка сканирования"""
@@ -531,8 +683,33 @@ class ObsidianMainWindow:
     
     def _update_ui_state(self):
         """Обновление состояния UI"""
-        dpg.configure_item("scan_button", show=not self.is_scanning)
-        dpg.configure_item("stop_button", show=self.is_scanning)
+        # Боковая панель
+        dpg.configure_item("quick_scan_button", show=not self.is_scanning)
+        dpg.configure_item("quick_stop_button", show=self.is_scanning)
+        
+        # Основная вкладка
+        if dpg.does_item_exist("adv_scan_button"):
+            dpg.configure_item("adv_scan_button", show=not self.is_scanning)
+        if dpg.does_item_exist("adv_stop_button"):
+            dpg.configure_item("adv_stop_button", show=self.is_scanning)
+    
+    def show_settings(self):
+        """Показать окно настроек"""
+        dpg.show_item("settings_window")
+        dpg.bring_item_to_front("settings_window")
+    
+    def save_settings(self):
+        """Сохранение настроек"""
+        self.add_to_log("⚙️ Settings saved")
+        dpg.hide_item("settings_window")
+    
+    def clear_results(self):
+        """Очистка результатов"""
+        self.graph.clear()
+        dpg.delete_item("graph_canvas", children_only=True)
+        dpg.set_value("activity_log", "")
+        dpg.set_value("node_details", "")
+        self.add_to_log("🧹 Results cleared")
     
     def add_to_log(self, message: str):
         """Добавление сообщения в лог"""
@@ -573,6 +750,7 @@ class ObsidianMainWindow:
         """Очистка графа"""
         self.graph.clear()
         dpg.delete_item("graph_canvas", children_only=True)
+        self.add_to_log("🧹 Graph cleared")
     
     def export_results(self):
         """Экспорт результатов"""
@@ -582,7 +760,6 @@ class ObsidianMainWindow:
     
     def export_graph(self):
         """Экспорт графа"""
-        # Простая реализация экспорта графа
         graph_data = {
             'nodes': list(self.graph.nodes.values()),
             'edges': self.graph.edges
@@ -596,15 +773,19 @@ class ObsidianMainWindow:
         """Обработчик событий движка"""
         try:
             if event_type in ['node_discovered', 'node_added']:
-                self.add_to_log(f"🔍 Discovered: {data.data if data else 'Unknown'}")
+                node_data = data.data if data else 'Unknown'
+                self.add_to_log(f"🔍 Discovered: {node_data}")
                 self.update_graph()
             elif event_type == 'scan_completed':
                 self.add_to_log("✅ Scan completed")
                 self.is_scanning = False
                 self._update_ui_state()
-                dpg.set_value("status_text", "Status: Completed")
+                if dpg.does_item_exist("status_text"):
+                    dpg.set_value("status_text", "Status: Completed")
             elif event_type == 'vulnerability_found':
                 self.add_to_log(f"🔴 Vulnerability: {data.get('cve', 'Unknown')}")
+            elif event_type == 'exploitation_success':
+                self.add_to_log(f"💥 Exploitation success: {data.get('access_type', 'Unknown')}")
             
             # Обновляем статистику
             self._update_statistics()
