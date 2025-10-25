@@ -144,7 +144,7 @@ class MainWindow:
     
     def create_sidebar(self):
         """Создание боковой панели"""
-        with dpg.group():
+        with dpg.group(parent="sidebar"):
             dpg.add_spacer(height=10)
             dpg.add_text("RapidRecon", color=[123, 97, 255])
             dpg.add_text("Security Scanner", color=[150, 150, 160])
@@ -314,7 +314,7 @@ class MainWindow:
         intensity = dpg.get_value("dashboard_intensity")
         self.update_activity_log(f"Starting {intensity} scan for: {target}")
         
-        # ИНТЕГРАЦИЯ С ДВИЖКОМ
+        # ИНТЕГРАЦИЯ С ДВИЖКОМ - запускаем настоящее сканирование
         if hasattr(self.engine, 'add_initial_target'):
             self.engine.add_initial_target(target)
             self.update_activity_log(f"Target {target} added to engine queue")
@@ -322,6 +322,27 @@ class MainWindow:
         # Запускаем через ControlsPanel
         self.controls_panel.start_scan(target, intensity)
         self.update_scan_state()
+        
+        # Запускаем обработку очереди в движке
+        self.start_engine_processing()
+    
+    def start_engine_processing(self):
+        """Запуск обработки очереди в движке"""
+        import asyncio
+        import threading
+        
+        def run_engine():
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self.engine.process_queue())
+            except Exception as e:
+                self.logger.error(f"Engine processing error: {e}")
+        
+        # Запускаем движок в отдельном потоке
+        engine_thread = threading.Thread(target=run_engine, daemon=True)
+        engine_thread.start()
+        self.update_activity_log("Engine processing started in background")
     
     def add_target_from_dashboard(self):
         """Добавление цели из dashboard"""
@@ -360,9 +381,11 @@ class MainWindow:
         self.update_activity_log("Exporting network tree...")
     
     def handle_engine_event(self, event_type: str, data: Any = None):
-        """Обработка событий от движка"""
+        """Обработка событий от движка - КЛЮЧЕВАЯ ФУНКЦИЯ"""
         try:
-            if event_type in ['node_discovered', 'node_added']:
+            self.logger.info(f"GUI received event: {event_type}")
+            
+            if event_type in ['node_discovered', 'node_added', 'module_results']:
                 # Обновляем данные из движка
                 if hasattr(self.engine, 'discovered_nodes'):
                     self.nodes_data = self.engine.discovered_nodes.copy()
@@ -379,7 +402,11 @@ class MainWindow:
                 # Обновляем статистику
                 self.update_statistics()
                 
-                self.update_activity_log(f"New data: {event_type}")
+                # Логируем событие
+                if event_type == 'node_discovered':
+                    self.update_activity_log(f"New node discovered: {data.data if hasattr(data, 'data') else data}")
+                elif event_type == 'module_results':
+                    self.update_activity_log(f"Module completed: {data.get('module', 'unknown')}")
                 
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
