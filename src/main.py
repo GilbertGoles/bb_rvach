@@ -20,13 +20,13 @@ from core.module_manager import ModuleManager
 from core.config import ConfigManager
 from gui.main_window import MainWindow
 
-# Импорт модулей
+# Импорт модулей (КЛАССОВ, а не экземпляров)
 from modules.ping_scanner.module import PingScanner
 from modules.port_scanner.module import PortScanner
 from modules.service_detector.module import ServiceDetector
 from modules.subdomain_scanner.module import SubdomainScanner
 from modules.vulnerability_scanner.module import VulnerabilityScanner
-from modules.exploitation.module import Exploitation  # Новый модуль эксплуатации
+from modules.exploitation.module import Exploitation
 
 class RapidRecon:
     """
@@ -117,28 +117,14 @@ class RapidRecon:
                 discovered = self.module_manager.discover_modules()
                 self.logger.info(f"🔍 Обнаружено модулей: {len(discovered)}")
             
-            # Инициализация движка с callback для обновления GUI и config_manager
-            engine_config = self.config['engine']
+            # Инициализация движка БЕЗ параметров конфигурации
             self.engine = PropagationEngine(update_callback=self.on_engine_update)
             
-            # Регистрация модулей
-            self.register_modules()
+            # Загрузка модулей
+            self.load_modules()
             
-            # Автоматическая загрузка модулей из директории
-            if self.config['modules']['auto_load']:
-                load_results = self.module_manager.load_all_modules()
-                loaded_count = sum(1 for result in load_results.values() if result)
-                self.logger.info(f"📦 Загружено модулей: {loaded_count}/{len(load_results)}")
-                
-                # Регистрация загруженных модулей в движке
-                for module_name, success in load_results.items():
-                    if success:
-                        module_instance = self.module_manager.get_module(module_name)
-                        if module_instance:
-                            self.engine.register_module(module_name, module_instance)
-            
-            # Инициализация GUI
-            self.gui = MainWindow(self.engine, self.module_manager, self.config_manager)
+            # Инициализация GUI БЕЗ config_manager
+            self.gui = MainWindow(self.engine, self.module_manager)
             
             # Настройка интервала обновления из конфигурации
             self.update_interval = self.config['app'].get('update_interval', 0.5)
@@ -149,85 +135,53 @@ class RapidRecon:
             self.logger.error(f"❌ Ошибка инициализации компонентов: {e}")
             raise
     
-    def register_modules(self):
-        """Регистрация всех модулей в движке"""
-        self.logger.info("🔧 Регистрация модулей...")
-        
-        # Прямая регистрация основных модулей
-        modules_to_register = {
-            "ping_scanner": PingScanner,
-            "port_scanner": PortScanner,
-            "service_detector": ServiceDetector,
-            "subdomain_scanner": SubdomainScanner,
-            "vulnerability_scanner": VulnerabilityScanner,
-            "exploitation": Exploitation  # Новый модуль эксплуатации
-        }
-        
-        registered_count = 0
-        
-        for module_name, module_class in modules_to_register.items():
-            try:
-                # Создаем экземпляр модуля с правильными параметрами
-                module_instance = self.create_module_instance(module_class, module_name)
-                
-                # Регистрируем модуль в движке
-                self.engine.register_module(module_name, module_instance)
-                registered_count += 1
-                self.logger.info(f"✅ Зарегистрирован модуль: {module_name}")
-                
-            except Exception as e:
-                self.logger.error(f"❌ Ошибка регистрации модуля {module_name}: {e}")
-        
-        # Дополнительная регистрация через конфигурацию (для обратной совместимости)
-        builtin_modules = self.config['modules'].get('builtin_modules', [])
-        additional_registered = 0
-        
-        for module_name in builtin_modules:
-            if module_name not in modules_to_register:  # Не регистрируем повторно
-                try:
-                    module_class = self.load_builtin_module(module_name)
-                    if module_class:
-                        module_instance = self.create_module_instance(module_class, module_name)
-                        self.engine.register_module(module_name, module_instance)
-                        additional_registered += 1
-                        self.logger.info(f"✅ Зарегистрирован встроенный модуль: {module_name}")
-                    else:
-                        self.logger.warning(f"⚠️ Не удалось загрузить встроенный модуль: {module_name}")
-                except Exception as e:
-                    self.logger.error(f"❌ Ошибка регистрации встроенного модуля {module_name}: {e}")
-        
-        self.logger.info(f"📋 Зарегистрировано модулей: {registered_count} основных + {additional_registered} дополнительных")
-    
-    def create_module_instance(self, module_class: Type, module_name: str) -> Any:
-        """
-        Создание экземпляра модуля с правильными параметрами
-        
-        Args:
-            module_class: Класс модуля
-            module_name: Имя модуля для конфигурации
+    def load_modules(self):
+        """Загрузка и регистрация модулей"""
+        try:
+            # Загружаем модули через менеджер
+            self.module_manager.load_modules()
             
-        Returns:
-            Экземпляр модуля
-        """
-        # Получаем конфигурацию модуля
-        module_config = self.config_manager.get_module_config(module_name)
-        rate_limit = module_config.get('rate_limit', self.engine.rate_limit)
-        
-        # Определяем параметры конструктора
-        init_params = module_class.__init__.__code__.co_varnames
-        
-        if 'config_manager' in init_params and 'module_config' in init_params:
-            # Модуль поддерживает оба параметра
-            return module_class(rate_limit, config_manager=self.config_manager, module_config=module_config)
-        elif 'config_manager' in init_params:
-            # Модуль поддерживает только config_manager
-            return module_class(rate_limit, config_manager=self.config_manager)
-        elif 'module_config' in init_params:
-            # Модуль поддерживает только module_config
-            return module_class(rate_limit, module_config=module_config)
-        else:
-            # Базовый конструктор
-            return module_class(rate_limit)
+            # Регистрируем модули в движке (передаем КЛАССЫ)
+            module_classes = {
+                'ping_scanner': PingScanner,
+                'port_scanner': PortScanner,
+                'service_detector': ServiceDetector,
+                'subdomain_scanner': SubdomainScanner,
+                'vulnerability_scanner': VulnerabilityScanner,
+                'exploitation': Exploitation
+            }
+            
+            registered_count = 0
+            
+            for name, module_class in module_classes.items():
+                try:
+                    self.engine.register_module(name, module_class)
+                    registered_count += 1
+                    self.logger.info(f"✅ Модуль зарегистрирован: {name}")
+                except Exception as e:
+                    self.logger.error(f"❌ Ошибка регистрации модуля {name}: {e}")
+            
+            # Дополнительная регистрация через конфигурацию
+            builtin_modules = self.config['modules'].get('builtin_modules', [])
+            additional_registered = 0
+            
+            for module_name in builtin_modules:
+                if module_name not in module_classes:  # Не регистрируем повторно
+                    try:
+                        module_class = self.load_builtin_module(module_name)
+                        if module_class:
+                            self.engine.register_module(module_name, module_class)
+                            additional_registered += 1
+                            self.logger.info(f"✅ Зарегистрирован встроенный модуль: {module_name}")
+                        else:
+                            self.logger.warning(f"⚠️ Не удалось загрузить встроенный модуль: {module_name}")
+                    except Exception as e:
+                        self.logger.error(f"❌ Ошибка регистрации встроенного модуля {module_name}: {e}")
+            
+            self.logger.info(f"📋 Зарегистрировано модулей: {registered_count} основных + {additional_registered} дополнительных")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка загрузки модулей: {e}")
     
     def load_builtin_module(self, module_name: str) -> Optional[Type]:
         """
@@ -245,7 +199,7 @@ class RapidRecon:
             "service_detector": "modules.service_detector.module.ServiceDetector",
             "subdomain_scanner": "modules.subdomain_scanner.module.SubdomainScanner",
             "vulnerability_scanner": "modules.vulnerability_scanner.module.VulnerabilityScanner",
-            "exploitation": "modules.exploitation.module.Exploitation"  # Новый модуль
+            "exploitation": "modules.exploitation.module.Exploitation"
         }
         
         if module_name not in module_paths:
@@ -472,9 +426,8 @@ class RapidRecon:
             self.logger.info("✅ Конфигурация сохранена")
             
             # Сохранение профилей сканирования
-            if hasattr(self.gui, 'config_manager'):
-                self.gui.config_manager.save_profiles()
-                self.logger.info("✅ Профили сканирования сохранены")
+            self.config_manager.save_profiles()
+            self.logger.info("✅ Профили сканирования сохранены")
             
             # Сохранение конфигурации модулей
             self.config_manager.save_module_configs()
@@ -510,7 +463,6 @@ class RapidRecon:
     def show_error_message(self, message: str):
         """Показать сообщение об ошибке (для использования когда GUI не доступен)"""
         print(f"❌ Ошибка: {message}")
-        # В будущем можно добавить диалоговое окно с ошибкой
     
     def get_status(self) -> Dict[str, Any]:
         """
