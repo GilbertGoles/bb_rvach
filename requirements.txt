@@ -3,3 +3,8 @@ python-nmap==0.7.1
 asyncio
 aiohttp
 requests
+dearpygui==1.10.1
+python-nmap==0.7.1
+asyncio
+aiohttp
+requests
