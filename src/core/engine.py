@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 import random
 import ipaddress
+import inspect
 
 from .config import ConfigManager  # ← ДОБАВЛЕН импорт ConfigManager
 
@@ -261,23 +262,41 @@ class PropagationEngine:
     
     def register_module(self, module_name: str, module_class):
         """Регистрация модуля в системе"""
-        # Получаем конфигурацию модуля перед регистрацией
+        # Получаем конфигурацию модуля
         module_config = self.config_manager.get_module_config(module_name)
         
-        # Передаем конфигурацию модулю при создании
-        if hasattr(module_class, '__init__'):
-            # Проверяем, принимает ли модуль конфиг в конструкторе
-            module_instance = module_class(module_config)
-        else:
-            module_instance = module_class()
-            if hasattr(module_instance, 'update_config'):
-                module_instance.update_config(module_config)
-        
-        self.active_modules[module_name] = module_instance
-        self.logger.info(f"Модуль зарегистрирован: {module_name}")
-        
-        # Уведомляем GUI о новом модуле
-        self._notify_gui_update('module_registered', module_name)
+        # Создаем экземпляр модуля с конфигурацией
+        try:
+            # Пробуем передать конфиг в конструктор
+            if hasattr(module_class, '__init__'):
+                # Проверяем сигнатуру конструктора
+                sig = inspect.signature(module_class.__init__)
+                params = list(sig.parameters.keys())
+                
+                if len(params) > 1 and 'config' in params[1]:
+                    module_instance = module_class(module_config)
+                else:
+                    module_instance = module_class()
+                    if hasattr(module_instance, 'update_config'):
+                        module_instance.update_config(module_config)
+            else:
+                module_instance = module_class()
+                
+            self.active_modules[module_name] = module_instance
+            self.logger.info(f"Модуль зарегистрирован: {module_name}")
+            
+            # Уведомляем GUI о новом модуле
+            self._notify_gui_update('module_registered', module_name)
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка создания модуля {module_name}: {e}")
+            # Создаем модуль без конфига как fallback
+            try:
+                module_instance = module_class()
+                self.active_modules[module_name] = module_instance
+                self.logger.info(f"Модуль зарегистрирован (без конфига): {module_name}")
+            except Exception as e2:
+                self.logger.error(f"Не удалось создать модуль {module_name}: {e2}")
     
     def register_callback(self, event_type: str, callback: Callable):
         """Регистрация callback-функций для событий"""
