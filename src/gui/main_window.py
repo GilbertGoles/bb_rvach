@@ -84,6 +84,10 @@ class MainWindow:
         self.hosts_data = {}
         self.nodes_data = {}
         
+        # Статистика
+        self.last_stats_update = 0
+        self.stats_update_interval = 1.0  # секунды
+        
         # Инициализация GUI
         self.initialize_gui()
         
@@ -187,6 +191,7 @@ class MainWindow:
                 dpg.add_text("Nodes: 0", tag="stat_nodes")
                 dpg.add_text("Hosts: 0", tag="stat_hosts")
                 dpg.add_text("Services: 0", tag="stat_services")
+                dpg.add_text("Ports: 0", tag="stat_ports")
                 
                 dpg.add_text("Security Findings:")
                 dpg.add_text("Vulnerabilities: 0", tag="stat_vulns", color=[150, 150, 160])
@@ -254,7 +259,7 @@ class MainWindow:
                     dpg.add_text("Engine: Running", color=[72, 199, 116])
                     dpg.add_text("Modules: 6/6 Ready", color=[72, 199, 116])
                     dpg.add_text("Last Scan: Never", color=[255, 179, 64])
-                    dpg.add_text("Active Scans: 0", color=[150, 150, 160])
+                    dpg.add_text("Active Scans: 0", tag="stat_active_scans", color=[150, 150, 160])
             
             # Activity Log
             dpg.add_spacer(height=10)
@@ -338,6 +343,7 @@ class MainWindow:
                 loop.run_until_complete(self.engine.process_queue())
             except Exception as e:
                 self.logger.error(f"Engine processing error: {e}")
+                self.update_activity_log(f"Engine error: {e}")
         
         # Запускаем движок в отдельном потоке
         engine_thread = threading.Thread(target=run_engine, daemon=True)
@@ -374,7 +380,64 @@ class MainWindow:
     
     def show_network_statistics(self):
         """Показать статистику сети"""
-        self.update_activity_log("Showing network statistics")
+        stats = self.calculate_detailed_statistics()
+        
+        if dpg.does_item_exist("network_stats_window"):
+            dpg.delete_item("network_stats_window")
+        
+        with dpg.window(
+            tag="network_stats_window",
+            label="Network Statistics",
+            width=400,
+            height=300,
+            modal=True
+        ):
+            dpg.add_text("Detailed Network Statistics")
+            dpg.add_separator()
+            
+            for category, count in stats.items():
+                with dpg.group(horizontal=True):
+                    dpg.add_text(f"{category}:")
+                    dpg.add_text(str(count), color=[123, 97, 255])
+        
+        self.update_activity_log("Showing detailed network statistics")
+    
+    def calculate_detailed_statistics(self) -> Dict[str, int]:
+        """Расчет детальной статистики сети"""
+        try:
+            # Получаем статистику из движка
+            engine_stats = self.engine.get_statistics() if hasattr(self.engine, 'get_statistics') else {}
+            
+            # Считаем статистику из данных
+            total_nodes = len(self.nodes_data)
+            total_hosts = len(self.hosts_data)
+            total_ports = sum(len(host.get('ports', [])) for host in self.hosts_data.values())
+            total_services = sum(len(host.get('services', [])) for host in self.hosts_data.values())
+            
+            # Считаем уязвимости из данных узлов
+            vulnerabilities = []
+            for node in self.nodes_data.values():
+                if hasattr(node, 'vulnerabilities') and node.vulnerabilities:
+                    vulnerabilities.extend(node.vulnerabilities)
+                elif isinstance(node, dict) and node.get('vulnerabilities'):
+                    vulnerabilities.extend(node['vulnerabilities'])
+            
+            total_vulns = len(vulnerabilities)
+            
+            return {
+                "Total Nodes": total_nodes,
+                "Active Hosts": total_hosts,
+                "Open Ports": total_ports,
+                "Running Services": total_services,
+                "Vulnerabilities Found": total_vulns,
+                "Successful Scans": engine_stats.get('successful_scans', 0),
+                "Failed Scans": engine_stats.get('failed_scans', 0),
+                "Pending Tasks": engine_stats.get('pending_tasks', 0)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating statistics: {e}")
+            return {"Error": "Could not calculate statistics"}
     
     def export_network_tree(self):
         """Экспорт дерева сети"""
@@ -385,13 +448,9 @@ class MainWindow:
         try:
             self.logger.info(f"GUI received event: {event_type}")
             
-            if event_type in ['node_discovered', 'node_added', 'module_results']:
-                # Обновляем данные из движка
-                if hasattr(self.engine, 'discovered_nodes'):
-                    self.nodes_data = self.engine.discovered_nodes.copy()
-                
-                if hasattr(self.engine, 'hosts_data'):
-                    self.hosts_data = self.engine.hosts_data.copy()
+            if event_type in ['node_discovered', 'node_added', 'module_results', 'progress_update']:
+                # ОБНОВЛЯЕМ ДАННЫЕ ИЗ ДВИЖКА ПРАВИЛЬНО
+                self.update_engine_data()
                 
                 # Обновляем UI
                 if self.current_tab == "network_tree":
@@ -399,28 +458,97 @@ class MainWindow:
                 elif self.current_tab == "hosts_table":
                     self.hosts_table.update_table(self.hosts_data)
                 
-                # Обновляем статистику
+                # Обновляем статистику СРАЗУ
                 self.update_statistics()
                 
                 # Логируем событие
                 if event_type == 'node_discovered':
-                    self.update_activity_log(f"New node discovered: {data.data if hasattr(data, 'data') else data}")
+                    node_info = data.data if hasattr(data, 'data') else str(data)
+                    self.update_activity_log(f"New node discovered: {node_info}")
                 elif event_type == 'module_results':
-                    self.update_activity_log(f"Module completed: {data.get('module', 'unknown')}")
+                    module_name = data.get('module', 'unknown') if isinstance(data, dict) else 'unknown'
+                    self.update_activity_log(f"Module completed: {module_name}")
+                elif event_type == 'progress_update':
+                    if isinstance(data, dict):
+                        pending = data.get('pending_tasks', 0)
+                        completed = data.get('completed_tasks', 0)
+                        self.update_activity_log(f"Progress: {completed} completed, {pending} pending")
                 
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
     
-    def update_statistics(self):
-        """Обновление статистики"""
+    def update_engine_data(self):
+        """Обновление данных из движка - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         try:
+            # Получаем данные напрямую из движка
+            if hasattr(self.engine, 'discovered_nodes'):
+                # discovered_nodes это список ScanNode объектов
+                engine_nodes = self.engine.discovered_nodes
+                
+                # Конвертируем в словарь для network_tree
+                self.nodes_data = {}
+                for node in engine_nodes:
+                    node_id = getattr(node, 'node_id', str(id(node)))
+                    self.nodes_data[node_id] = {
+                        'id': node_id,
+                        'type': getattr(node, 'type', 'unknown'),
+                        'label': getattr(node, 'data', 'Unknown'),
+                        'data': getattr(node, 'data', {}),
+                        'timestamp': getattr(node, 'timestamp', time.time())
+                    }
+            
+            # Обновляем hosts_data из движка
+            if hasattr(self.engine, 'hosts_data'):
+                engine_hosts = self.engine.hosts_data
+                if isinstance(engine_hosts, dict):
+                    self.hosts_data = engine_hosts.copy()
+                else:
+                    # Если hosts_data это не словарь, создаем из discovered_nodes
+                    self.hosts_data = {}
+                    for node in getattr(self.engine, 'discovered_nodes', []):
+                        if hasattr(node, 'type') and node.type.name in ['ACTIVE_HOST', 'IP_ADDRESS']:
+                            ip = getattr(node, 'data', 'unknown')
+                            self.hosts_data[ip] = {
+                                'hostname': getattr(node, 'data', 'Unknown'),
+                                'status': 'active',
+                                'ports': getattr(node, 'ports', []),
+                                'services': getattr(node, 'services', []),
+                                'os': 'Unknown',
+                                'last_seen': datetime.now().strftime("%H:%M:%S"),
+                                'tags': ['discovered']
+                            }
+            
+        except Exception as e:
+            self.logger.error(f"Error updating engine data: {e}")
+    
+    def update_statistics(self):
+        """Обновление статистики на боковой панели"""
+        try:
+            # Обновляем данные из движка перед расчетом статистики
+            self.update_engine_data()
+            
+            # Рассчитываем статистику
             total_nodes = len(self.nodes_data)
             total_hosts = len(self.hosts_data)
-            total_services = sum(len(h.get('services', [])) for h in self.hosts_data.values())
+            total_services = sum(len(host.get('services', [])) for host in self.hosts_data.values())
+            total_ports = sum(len(host.get('ports', [])) for host in self.hosts_data.values())
             
+            # Получаем статистику из движка
+            engine_stats = self.engine.get_statistics() if hasattr(self.engine, 'get_statistics') else {}
+            total_vulns = engine_stats.get('vulnerabilities_found', 0)
+            total_exploits = engine_stats.get('exploits_successful', 0)
+            
+            # Обновляем UI
             dpg.set_value("stat_nodes", f"Nodes: {total_nodes}")
             dpg.set_value("stat_hosts", f"Hosts: {total_hosts}")
             dpg.set_value("stat_services", f"Services: {total_services}")
+            dpg.set_value("stat_ports", f"Ports: {total_ports}")
+            dpg.set_value("stat_vulns", f"Vulnerabilities: {total_vulns}")
+            dpg.set_value("stat_exploits", f"Exploits: {total_exploits}")
+            
+            # Обновляем активные сканы
+            pending_tasks = engine_stats.get('pending_tasks', 0)
+            dpg.set_value("stat_active_scans", f"Active Scans: {pending_tasks}")
             
         except Exception as e:
             self.logger.error(f"Error updating statistics: {e}")
@@ -431,8 +559,12 @@ class MainWindow:
             self.logger.info("Запуск графического интерфейса...")
             
             while dpg.is_dearpygui_running():
-                # Постоянно проверяем обновления от движка
-                self.check_engine_updates()
+                # Постоянно проверяем обновления от движка с интервалом
+                current_time = time.time()
+                if current_time - self.last_stats_update >= self.stats_update_interval:
+                    self.check_engine_updates()
+                    self.last_stats_update = current_time
+                
                 dpg.render_dearpygui_frame()
             
             self.destroy()
@@ -443,18 +575,11 @@ class MainWindow:
     def check_engine_updates(self):
         """Проверка обновлений от движка"""
         try:
-            # Проверяем наличие новых данных в движке
-            if hasattr(self.engine, 'discovered_nodes'):
-                new_nodes = self.engine.discovered_nodes
-                if new_nodes != self.nodes_data:
-                    self.nodes_data = new_nodes.copy()
-                    self.handle_engine_event('node_discovered')
+            # Обновляем данные из движка
+            self.update_engine_data()
             
-            if hasattr(self.engine, 'hosts_data'):
-                new_hosts = self.engine.hosts_data
-                if new_hosts != self.hosts_data:
-                    self.hosts_data = new_hosts.copy()
-                    self.handle_engine_event('node_discovered')
+            # Обновляем статистику
+            self.update_statistics()
                     
         except Exception as e:
             self.logger.error(f"Error checking engine updates: {e}")
