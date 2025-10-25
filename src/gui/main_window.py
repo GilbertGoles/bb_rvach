@@ -318,34 +318,35 @@ class MainWindow:
     
     def create_content_area(self):
         """Создание основной области с вкладками модулей"""
+        # ВСЕ ВКЛАДКИ ДОЛЖНЫ БЫТЬ ВНУТРИ ОДНОГО tab_bar!
         with dpg.tab_bar(tag="main_tabs"):
-            # 1. Вкладка дерева сети
+            # 1. Вкладка Dashboard (перенесено из боковой панели)
+            with dpg.tab(label="Dashboard", tag="dashboard_tab"):
+                self.create_dashboard_tab()
+            
+            # 2. Вкладка дерева сети
             with dpg.tab(label="Network Tree", tag="tree_tab"):
                 self.create_network_tree_tab()
             
-            # 2. Вкладка таблицы хостов
+            # 3. Вкладка таблицы хостов
             with dpg.tab(label="Hosts Table", tag="table_tab"):
                 self.create_hosts_table_tab()
             
-            # 3. Вкладка управления scope
+            # 4. Вкладка управления scope
             with dpg.tab(label="Scope Manager", tag="scope_tab"):
                 self.create_scope_manager_tab()
             
-            # 4. Вкладка уязвимостей
+            # 5. Вкладка уязвимостей
             with dpg.tab(label="Vulnerabilities", tag="vulns_tab"):
                 self.create_vulnerabilities_tab()
             
-            # 5. Вкладка эксплуатации
+            # 6. Вкладка эксплуатации
             with dpg.tab(label="Exploitation", tag="exploit_tab"):
                 self.create_exploitation_tab()
             
-            # 6. Вкладка отчетов
+            # 7. Вкладка отчетов
             with dpg.tab(label="Reports", tag="reports_tab"):
                 self.create_reports_tab()
-            
-            # 7. Новая вкладка: Dashboard (перенесено из боковой панели)
-            with dpg.tab(label="Dashboard", tag="dashboard_tab"):
-                self.create_dashboard_tab()
     
     def create_dashboard_tab(self):
         """Новая вкладка Dashboard с перенесенными элементами"""
