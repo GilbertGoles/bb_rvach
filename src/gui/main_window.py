@@ -342,6 +342,7 @@ class MainWindow:
         self.selected_targets = set()
         self.last_update_time = 0
         self.update_interval = 2.0  # Обновление каждые 2 секунды
+        self.discovered_nodes = {}  # Локальное хранилище обнаруженных узлов
         
         self.logger.info("🎨 Инициализация графического интерфейса...")
         
@@ -1125,6 +1126,7 @@ class MainWindow:
             if hasattr(self.engine, 'clear_results'):
                 self.engine.clear_results()
             self.graph.clear()
+            self.discovered_nodes.clear()
             dpg.set_value("activity_log", "")
             # Сбрасываем статистику
             dpg.set_value("stat_nodes", "Nodes: 0")
@@ -1138,6 +1140,11 @@ class MainWindow:
             dpg.configure_item("discovered_targets_list", items=[])
             dpg.configure_item("exploit_targets", items=[])
             
+            # Очищаем дерево узлов
+            if dpg.does_item_exist("nodes_tree"):
+                dpg.delete_item("nodes_tree", children_only=True)
+                dpg.add_tree_node(tag="nodes_tree", label="Network Topology", default_open=True, parent="results_tab")
+            
             self.add_to_log("🧹 All results cleared")
         except Exception as e:
             self.logger.error(f"Error clearing results: {e}")
@@ -1146,22 +1153,10 @@ class MainWindow:
     def update_graph(self):
         """Обновление графа на основе данных сканирования"""
         try:
-            self.graph.clear()
-            
-            # Получаем данные из движка
-            if hasattr(self.engine, 'get_scan_results'):
-                scan_data = self.engine.get_scan_results()
-                
-                # Добавляем узлы и связи
-                for node in scan_data.get('nodes', []):
-                    node_id = self.graph.add_node(node)
-                    
-                    # Добавляем связи
-                    for edge in node.get('edges', []):
-                        self.graph.add_edge(node_id, edge['target_id'], edge.get('type', 'normal'))
-            
-            # Принудительная перерисовка
+            # Очищаем только отрисованные элементы, но сохраняем данные
             dpg.delete_item("graph_canvas", children_only=True)
+            
+            # Рисуем граф с текущими данными
             self.graph.draw_graph(1000, 600)
             
         except Exception as e:
@@ -1307,22 +1302,18 @@ class MainWindow:
                         # Обновляем счетчики в боковой панели
                         if 'nodes_discovered' in stats:
                             dpg.set_value("stat_nodes", f"Nodes: {stats['nodes_discovered']}")
-                        if 'services_found' in stats:
-                            dpg.set_value("stat_services", f"Services: {stats['services_found']}")
-                        if 'active_targets' in stats:
-                            dpg.set_value("stat_targets", f"Targets: {stats['active_targets']}")
-                        if 'vulnerabilities_found' in stats:
-                            dpg.set_value("stat_vulns", f"Vulnerabilities: {stats['vulnerabilities_found']}")
-                        if 'exploits_successful' in stats:
-                            dpg.set_value("stat_exploits", f"Exploits: {stats['exploits_successful']}")
-                        if 'lateral_movements' in stats:
-                            dpg.set_value("stat_lateral", f"Lateral Moves: {stats['lateral_movements']}")
+                        elif 'active_modules' in stats:
+                            # Если нет специальной статистики, используем количество узлов в графе
+                            dpg.set_value("stat_nodes", f"Nodes: {len(self.graph.nodes)}")
                         
                         # Обновляем граф
                         self.update_graph()
                         
                         # Обновляем список целей
                         self._update_targets_list()
+                        
+                        # Обновляем дерево узлов
+                        self._update_nodes_tree()
                         
                     except Exception as e:
                         self.logger.error(f"Error in UI update: {e}")
@@ -1335,21 +1326,10 @@ class MainWindow:
         try:
             targets = []
             
-            # Пробуем разные способы получить цели из движка
-            if hasattr(self.engine, 'discovered_nodes') and self.engine.discovered_nodes:
-                for node_id, node in self.engine.discovered_nodes.items():
-                    target_info = f"{node.get('data', 'Unknown')} - {node.get('type', 'unknown')}"
-                    targets.append(target_info)
-                    
-            elif hasattr(self.engine, 'get_scan_results'):
-                scan_data = self.engine.get_scan_results()
-                for node in scan_data.get('nodes', []):
-                    target_info = f"{node.get('data', 'Unknown')} - {node.get('type', 'unknown')}"
-                    targets.append(target_info)
-                    
-            elif hasattr(self.engine, 'active_targets') and self.engine.active_targets:
-                for target in self.engine.active_targets:
-                    targets.append(f"{target} - active")
+            # Используем узлы из графа
+            for node_id, node in self.graph.nodes.items():
+                target_info = f"{node['label']} - {node['type']}"
+                targets.append(target_info)
             
             # Обновляем список в окне выбора целей
             dpg.configure_item("discovered_targets_list", items=targets)
@@ -1360,26 +1340,49 @@ class MainWindow:
         except Exception as e:
             self.logger.error(f"Error updating targets list: {e}")
     
+    def _update_nodes_tree(self):
+        """Обновление дерева узлов на вкладке результатов"""
+        try:
+            if not dpg.does_item_exist("nodes_tree"):
+                return
+                
+            # Очищаем старое дерево
+            dpg.delete_item("nodes_tree", children_only=True)
+            
+            # Группируем узлы по типам
+            nodes_by_type = {}
+            for node_id, node in self.graph.nodes.items():
+                node_type = node['type']
+                if node_type not in nodes_by_type:
+                    nodes_by_type[node_type] = []
+                nodes_by_type[node_type].append(node)
+            
+            # Добавляем узлы в дерево по типам
+            for node_type, nodes in nodes_by_type.items():
+                with dpg.tree_node(label=f"{node_type.title()} ({len(nodes)})", parent="nodes_tree"):
+                    for node in nodes:
+                        node_label = f"{node['label']} - {node['type']}"
+                        dpg.add_text(node_label)
+                        
+        except Exception as e:
+            self.logger.error(f"Error updating nodes tree: {e}")
+    
     def handle_engine_event(self, event_type: str, data: Any = None):
         """Обработка событий от движка"""
         try:
-            self.logger.info(f"GUI received engine event: {event_type}")
+            self.logger.info(f"GUI received engine event: {event_type} - {data}")
             
-            if event_type == 'node_discovered':
+            if event_type == 'node_added':
+                self.add_to_log(f"🎯 Target added: {data}")
+                
+            elif event_type == 'node_discovered':
                 self.add_to_log(f"🔍 Node discovered: {data}")
-                self._update_targets_list()
-                self.update_graph()
+                self._process_discovered_node(data)
                 
-                # Обновляем счетчик узлов
-                current_nodes = int(dpg.get_value("stat_nodes").split(": ")[1])
-                dpg.set_value("stat_nodes", f"Nodes: {current_nodes + 1}")
-                
-            elif event_type == 'service_found':
-                self.add_to_log(f"⚙️ Service found: {data}")
-                
-                # Обновляем счетчик сервисов
-                current_services = int(dpg.get_value("stat_services").split(": ")[1])
-                dpg.set_value("stat_services", f"Services: {current_services + 1}")
+            elif event_type == 'module_results':
+                self.add_to_log(f"⚙️ Module results received")
+                if data and isinstance(data, dict):
+                    self._process_module_results(data)
                 
             elif event_type == 'scan_completed':
                 self.add_to_log("✅ Scan completed")
@@ -1410,8 +1413,48 @@ class MainWindow:
                 current_lateral = int(dpg.get_value("stat_lateral").split(": ")[1])
                 dpg.set_value("stat_lateral", f"Lateral Moves: {current_lateral + 1}")
                 
+            # Принудительно обновляем интерфейс после события
+            self.update_graph()
+            self._update_targets_list()
+            self._update_nodes_tree()
+                
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
+    
+    def _process_discovered_node(self, node_data):
+        """Обработка обнаруженного узла"""
+        try:
+            if isinstance(node_data, dict):
+                # Добавляем узел в граф
+                node_id = self.graph.add_node(node_data)
+                
+                # Обновляем статистику
+                current_nodes = int(dpg.get_value("stat_nodes").split(": ")[1])
+                dpg.set_value("stat_nodes", f"Nodes: {current_nodes + 1}")
+                
+                self.logger.info(f"Added node to graph: {node_data}")
+                
+        except Exception as e:
+            self.logger.error(f"Error processing discovered node: {e}")
+    
+    def _process_module_results(self, results):
+        """Обработка результатов модуля"""
+        try:
+            if 'nodes' in results:
+                for node_data in results['nodes']:
+                    self._process_discovered_node(node_data)
+                    
+            if 'edges' in results:
+                for edge_data in results['edges']:
+                    if 'source' in edge_data and 'target' in edge_data:
+                        self.graph.add_edge(
+                            edge_data['source'], 
+                            edge_data['target'], 
+                            edge_data.get('type', 'normal')
+                        )
+                        
+        except Exception as e:
+            self.logger.error(f"Error processing module results: {e}")
     
     def run(self):
         """Запуск GUI"""
