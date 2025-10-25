@@ -1,5 +1,5 @@
 """
-Главное окно RapidRecon в стиле Obsidian - ИСПРАВЛЕННАЯ ВЕРСИЯ
+Главное окно RapidRecon в стиле Obsidian - ИСПРАВЛЕННАЯ ВЕРСИЯ с таблицей хостов
 """
 import dearpygui.dearpygui as dpg
 from typing import Dict, Any, List, Optional, Tuple
@@ -350,6 +350,88 @@ class GraphVisualization:
         self.node_counter = 0
         self.selected_node = None
 
+class HostManager:
+    """Менеджер хостов для табличного отображения"""
+    
+    def __init__(self):
+        self.hosts = {}  # ip -> host_data
+        self.selected_host = None
+    
+    def add_host(self, ip: str, host_data: Dict[str, Any]):
+        """Добавить хост"""
+        try:
+            if ip not in self.hosts:
+                self.hosts[ip] = {
+                    'ip': ip,
+                    'hostname': host_data.get('hostname', 'Unknown'),
+                    'ports': host_data.get('ports', []),
+                    'services': host_data.get('services', []),
+                    'os': host_data.get('os', 'Unknown'),
+                    'status': host_data.get('status', 'unknown'),
+                    'last_seen': datetime.now().strftime("%H:%M:%S"),
+                    'vulnerabilities': host_data.get('vulnerabilities', []),
+                    'tags': host_data.get('tags', [])
+                }
+            else:
+                # Обновляем существующий хост
+                self.hosts[ip].update(host_data)
+                self.hosts[ip]['last_seen'] = datetime.now().strftime("%H:%M:%S")
+        except Exception as e:
+            logging.error(f"Error adding host: {e}")
+    
+    def get_host_details(self, ip: str) -> str:
+        """Получить детальную информацию о хосте"""
+        try:
+            if ip not in self.hosts:
+                return f"Host {ip} not found"
+            
+            host = self.hosts[ip]
+            details = []
+            
+            details.append(f"=== {ip} ===")
+            details.append(f"Hostname: {host['hostname']}")
+            details.append(f"OS: {host['os']}")
+            details.append(f"Status: {host['status']}")
+            details.append(f"Last Seen: {host['last_seen']}")
+            
+            if host['ports']:
+                details.append(f"\nOpen Ports ({len(host['ports'])}):")
+                for port in host['ports']:
+                    details.append(f"  - {port}")
+            
+            if host['services']:
+                details.append(f"\nServices ({len(host['services'])}):")
+                for service in host['services']:
+                    details.append(f"  - {service}")
+            
+            if host['vulnerabilities']:
+                details.append(f"\nVulnerabilities ({len(host['vulnerabilities'])}):")
+                for vuln in host['vulnerabilities']:
+                    details.append(f"  - {vuln}")
+            
+            if host['tags']:
+                details.append(f"\nTags: {', '.join(host['tags'])}")
+            
+            return "\n".join(details)
+        except Exception as e:
+            logging.error(f"Error getting host details: {e}")
+            return f"Error getting host details: {e}"
+    
+    def get_hosts_table_data(self) -> List[List[str]]:
+        """Получить данные для таблицы хостов"""
+        table_data = []
+        for ip, host in self.hosts.items():
+            table_data.append([
+                ip,
+                host['hostname'],
+                str(len(host['ports'])),
+                host['os'],
+                host['status'],
+                str(len(host['vulnerabilities'])),
+                host['last_seen']
+            ])
+        return table_data
+
 class MainWindow:
     """
     Главный интерфейс RapidRecon в стиле Obsidian
@@ -359,6 +441,7 @@ class MainWindow:
         self.engine = engine
         self.module_manager = module_manager
         self.graph = GraphVisualization()
+        self.host_manager = HostManager()
         self.is_scanning = False
         self.logger = logging.getLogger('RapidRecon.GUI')
         self.settings_window_open = False
@@ -491,6 +574,7 @@ class MainWindow:
         with dpg.collapsing_header(label="📈 Live Statistics", default_open=True):
             dpg.add_text("Network:", color=[150, 150, 160])
             dpg.add_text("Nodes: 0", tag="stat_nodes")
+            dpg.add_text("Hosts: 0", tag="stat_hosts")
             dpg.add_text("Services: 0", tag="stat_services")
             dpg.add_text("Targets: 0", tag="stat_targets")
             
@@ -612,20 +696,45 @@ class MainWindow:
                     pass
     
     def create_results_tab(self):
-        """Создание вкладки результатов"""
+        """Создание вкладки результатов с таблицей хостов"""
         with dpg.group(horizontal=True):
-            # Дерево узлов
-            with dpg.child_window(width=450):
-                dpg.add_text("Discovered Infrastructure")
+            # Левая панель - таблица хостов
+            with dpg.child_window(width=600):
+                dpg.add_text("Discovered Hosts")
+                
+                # Таблица хостов
+                with dpg.table(
+                    tag="hosts_table",
+                    header_row=True,
+                    borders_innerH=True,
+                    borders_outerH=True,
+                    borders_innerV=True,
+                    borders_outerV=True,
+                    resizable=True,
+                    policy=dpg.mvTable_SizingStretchProp,
+                    row_background=True,
+                    reorderable=True,
+                    hideable=True,
+                    sortable=True,
+                    context_menu_in_body=True,
+                    height=400
+                ):
+                    # Заголовки таблицы
+                    headers = ["IP Address", "Hostname", "Ports", "OS", "Status", "Vulns", "Last Seen"]
+                    for header in headers:
+                        dpg.add_table_column(label=header)
+                
+                # Дерево инфраструктуры
+                dpg.add_text("Network Infrastructure")
                 dpg.add_tree_node(tag="nodes_tree", label="Network Topology (0 nodes)", default_open=True)
             
-            # Детальная информация
+            # Правая панель - детальная информация
             with dpg.child_window():
-                dpg.add_text("Node Details")
+                dpg.add_text("Host & Node Details")
                 dpg.add_input_text(
                     tag="node_details",
                     multiline=True,
-                    height=400,
+                    height=600,
                     readonly=True,
                     width=-1
                 )
@@ -783,6 +892,7 @@ class MainWindow:
             self.update_graph()
             self._update_statistics()
             self._update_nodes_tree()
+            self._update_hosts_table()
                 
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
@@ -818,6 +928,12 @@ class MainWindow:
                 for ip, ports in results['open_ports'].items():
                     if ports:
                         self.add_to_log(f"🔓 Open ports found on {ip}: {ports}")
+                        # Добавляем хост в менеджер хостов
+                        self.host_manager.add_host(ip, {
+                            'ports': ports,
+                            'status': 'active',
+                            'tags': ['port_scan']
+                        })
                         # Создаем узел для открытых портов
                         port_node_data = {
                             'type': 'open_ports',
@@ -876,6 +992,11 @@ class MainWindow:
                 node_data['type'] = 'subdomain'
             elif node_data['type'] == 'active_host':
                 node_data['type'] = 'active_host'
+                # Добавляем хост в таблицу
+                self.host_manager.add_host(node_data['data'], {
+                    'status': 'active',
+                    'tags': ['host_discovery']
+                })
             elif 'port' in node_data['module']:
                 node_data['type'] = 'open_ports'
             elif 'vulnerability' in node_data['module']:
@@ -966,11 +1087,13 @@ class MainWindow:
         """Обновление статистики"""
         try:
             nodes_count = len(self.graph.nodes)
+            hosts_count = len(self.host_manager.hosts)
             services_count = sum(1 for node in self.graph.nodes.values() if node['type'] == 'service')
             targets_count = sum(1 for node in self.graph.nodes.values() if node['type'] in ['initial_target', 'active_host'])
             vulnerabilities_count = sum(1 for node in self.graph.nodes.values() if node['type'] == 'vulnerability')
             
             dpg.set_value("stat_nodes", f"Nodes: {nodes_count}")
+            dpg.set_value("stat_hosts", f"Hosts: {hosts_count}")
             dpg.set_value("stat_services", f"Services: {services_count}")
             dpg.set_value("stat_targets", f"Targets: {targets_count}")
             dpg.set_value("stat_vulns", f"Vulnerabilities: {vulnerabilities_count}")
@@ -1002,12 +1125,63 @@ class MainWindow:
             for node_type, nodes in nodes_by_type.items():
                 with dpg.tree_node(label=f"{node_type.title()} ({len(nodes)})", parent="nodes_tree"):
                     for node in nodes:
-                        with dpg.tree_node(label=node['label']):
-                            details = self.graph.get_node_details(node['id'])
-                            dpg.add_text(details)
+                        node_label = f"{node['label']} ({node['id']})"
+                        with dpg.tree_node(label=node_label):
+                            # Добавляем кнопку для просмотра деталей
+                            def make_callback(node_id):
+                                return lambda: self._show_node_details(node_id)
+                            
+                            dpg.add_button(
+                                label="🔍 View Details", 
+                                callback=make_callback(node['id'])
+                            )
                             
         except Exception as e:
             self.logger.error(f"Error updating nodes tree: {e}")
+    
+    def _update_hosts_table(self):
+        """Обновление таблицы хостов"""
+        try:
+            if not dpg.does_item_exist("hosts_table"):
+                return
+            
+            # Очищаем таблицу (кроме заголовков)
+            dpg.delete_item("hosts_table", children_only=True)
+            
+            # Добавляем заголовки
+            headers = ["IP Address", "Hostname", "Ports", "OS", "Status", "Vulns", "Last Seen"]
+            for header in headers:
+                dpg.add_table_column(label=header, parent="hosts_table")
+            
+            # Добавляем строки с данными
+            table_data = self.host_manager.get_hosts_table_data()
+            for row_data in table_data:
+                with dpg.table_row(parent="hosts_table"):
+                    for i, cell_data in enumerate(row_data):
+                        # Для IP адреса делаем кликабельным
+                        if i == 0:
+                            dpg.add_selectable(label=cell_data, callback=lambda s, d, ip=cell_data: self._show_host_details(ip))
+                        else:
+                            dpg.add_text(cell_data)
+                            
+        except Exception as e:
+            self.logger.error(f"Error updating hosts table: {e}")
+    
+    def _show_node_details(self, node_id: int):
+        """Показать детали узла"""
+        try:
+            details = self.graph.get_node_details(node_id)
+            dpg.set_value("node_details", details)
+        except Exception as e:
+            self.logger.error(f"Error showing node details: {e}")
+    
+    def _show_host_details(self, ip: str):
+        """Показать детали хоста"""
+        try:
+            details = self.host_manager.get_host_details(ip)
+            dpg.set_value("node_details", details)
+        except Exception as e:
+            self.logger.error(f"Error showing host details: {e}")
     
     def add_to_log(self, message: str):
         """Добавить сообщение в лог"""
@@ -1038,6 +1212,7 @@ class MainWindow:
                         self._update_statistics()
                         self.update_graph()
                         self._update_nodes_tree()
+                        self._update_hosts_table()
                     except Exception as e:
                         self.logger.error(f"Error in UI update: {e}")
         
@@ -1067,16 +1242,22 @@ class MainWindow:
             if hasattr(self.engine, 'clear_results'):
                 self.engine.clear_results()
             self.graph.clear()
+            self.host_manager.hosts.clear()
             self.discovered_nodes.clear()
             self.node_id_map.clear()
             dpg.set_value("activity_log", "")
+            dpg.set_value("node_details", "")
             
             dpg.set_value("stat_nodes", "Nodes: 0")
+            dpg.set_value("stat_hosts", "Hosts: 0")
             dpg.set_value("stat_services", "Services: 0")
             dpg.set_value("stat_targets", "Targets: 0")
             dpg.set_value("stat_vulns", "Vulnerabilities: 0")
             dpg.set_value("stat_exploits", "Exploits: 0")
             dpg.set_value("stat_lateral", "Lateral Moves: 0")
+            
+            self._update_hosts_table()
+            self._update_nodes_tree()
             
             self.add_to_log("🧹 All results cleared")
         except Exception as e:
@@ -1138,7 +1319,34 @@ class MainWindow:
     
     def export_all_data(self):
         """Экспорт всех данных"""
-        self.add_to_log("📤 Exporting all data...")
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Экспорт графа
+            graph_filename = f"network_map_{timestamp}.json"
+            graph_data = {
+                'nodes': list(self.graph.nodes.values()),
+                'edges': self.graph.edges,
+                'hosts': self.host_manager.hosts,
+                'export_time': timestamp
+            }
+            
+            with open(graph_filename, 'w') as f:
+                json.dump(graph_data, f, indent=2)
+            
+            # Экспорт хостов
+            hosts_filename = f"hosts_{timestamp}.csv"
+            with open(hosts_filename, 'w') as f:
+                f.write("IP,Hostname,Ports,OS,Status,Vulnerabilities,LastSeen\n")
+                for ip, host in self.host_manager.hosts.items():
+                    ports = ','.join(map(str, host['ports']))
+                    vulns = ','.join(host['vulnerabilities'])
+                    f.write(f"{ip},{host['hostname']},{ports},{host['os']},{host['status']},{vulns},{host['last_seen']}\n")
+            
+            self.add_to_log(f"📤 All data exported: {graph_filename}, {hosts_filename}")
+        except Exception as e:
+            self.logger.error(f"Error exporting all data: {e}")
+            self.add_to_log(f"❌ Export failed: {str(e)}")
     
     def clear_everything(self):
         """Очистка всего"""
