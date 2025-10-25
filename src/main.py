@@ -7,7 +7,7 @@ import sys
 import os
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Type
+from typing import Optional, Dict, Any, List, Type, Callable
 import signal
 import time
 import importlib
@@ -39,6 +39,8 @@ class RapidRecon:
         self.is_running = False
         self.engine_thread: Optional[threading.Thread] = None
         self.event_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.last_update_time = 0
+        self.update_interval = 0.5  # Интервал обновления GUI в секундах
         
         # Инициализация компонентов
         self.initialize_components()
@@ -58,7 +60,8 @@ class RapidRecon:
                 "name": "RapidRecon",
                 "version": "1.0.0",
                 "debug": False,
-                "max_threads": 10
+                "max_threads": 10,
+                "update_interval": 0.5
             },
             "engine": {
                 "max_depth": 5,
@@ -165,12 +168,13 @@ class RapidRecon:
                 discovered = self.module_manager.discover_modules()
                 self.logger.info(f"🔍 Обнаружено модулей: {len(discovered)}")
             
-            # Инициализация движка
+            # Инициализация движка с callback для обновления GUI
             engine_config = self.config['engine']
             self.engine = PropagationEngine(
                 max_depth=engine_config['max_depth'],
                 max_concurrent_tasks=engine_config['max_concurrent_tasks'],
-                rate_limit=engine_config['rate_limit']
+                rate_limit=engine_config['rate_limit'],
+                update_callback=self.on_engine_update
             )
             
             # Регистрация модулей
@@ -191,6 +195,9 @@ class RapidRecon:
             
             # Инициализация GUI
             self.gui = MainWindow(self.engine, self.module_manager)
+            
+            # Настройка интервала обновления из конфигурации
+            self.update_interval = self.config['app'].get('update_interval', 0.5)
             
             self.logger.info("✅ Все компоненты инициализированы")
             
@@ -262,6 +269,57 @@ class RapidRecon:
             self.logger.error(f"❌ Ошибка загрузки модуля {module_name}: {e}")
             return None
     
+    def on_engine_update(self, event_type: str, data: Any = None):
+        """
+        Callback при обновлении движка для синхронизации с GUI
+        
+        Args:
+            event_type: Тип события от движка
+            data: Данные связанные с событием
+        """
+        try:
+            current_time = time.time()
+            
+            # Ограничиваем частоту обновлений чтобы не перегружать GUI
+            if current_time - self.last_update_time < self.update_interval:
+                return
+                
+            self.last_update_time = current_time
+            
+            # Обработка различных событий от движка
+            if event_type in ['node_discovered', 'node_added', 'task_completed']:
+                if self.gui:
+                    # Обновляем граф и статистику
+                    self.gui.update_graph_from_engine()
+                    self.gui.update_statistics()
+                    
+            elif event_type == 'scan_started':
+                if self.gui:
+                    self.gui.on_scan_started(data)
+                    
+            elif event_type == 'scan_completed':
+                if self.gui:
+                    self.gui.on_scan_completed(data)
+                    
+            elif event_type == 'task_failed':
+                if self.gui:
+                    self.gui.on_task_failed(data)
+                    
+            elif event_type == 'progress_update':
+                if self.gui:
+                    self.gui.on_progress_update(data)
+                    
+            elif event_type == 'module_results':
+                if self.gui:
+                    self.gui.on_module_results(data)
+            
+            # Логируем важные события
+            if event_type in ['node_discovered', 'task_failed', 'scan_completed']:
+                self.logger.debug(f"Engine event: {event_type} - {data}")
+                
+        except Exception as e:
+            self.logger.warning(f"Ошибка в engine callback: {e}")
+    
     def setup_signal_handlers(self):
         """Настройка обработчиков сигналов для graceful shutdown"""
         def signal_handler(signum, frame):
@@ -315,6 +373,7 @@ class RapidRecon:
             self.logger.info(f"🔧 Активных модулей: {engine_stats.get('active_modules', 0)}")
             self.logger.info(f"📊 Макс. глубина: {self.engine.max_depth}")
             self.logger.info(f"⚡ Лимит скорости: {self.engine.rate_limit}/сек")
+            self.logger.info(f"🔄 Интервал обновления GUI: {self.update_interval}с")
             
             # Запуск асинхронного движка в отдельном потоке
             self.engine_thread = threading.Thread(
@@ -415,7 +474,8 @@ class RapidRecon:
             'engine_status': engine_stats,
             'modules_status': module_stats,
             'threads_active': threading.active_count(),
-            'uptime': getattr(self, 'start_time', 0)
+            'uptime': getattr(self, 'start_time', 0),
+            'last_update': self.last_update_time
         }
     
     def add_scan_target(self, target: str):
@@ -430,6 +490,16 @@ class RapidRecon:
             self.logger.info(f"🎯 Добавлена цель для сканирования: {target}")
         else:
             self.logger.error("❌ Движок не инициализирован")
+    
+    def set_update_interval(self, interval: float):
+        """
+        Установка интервала обновления GUI
+        
+        Args:
+            interval: Интервал в секундах
+        """
+        self.update_interval = max(0.1, interval)  # Минимальный интервал 0.1 секунды
+        self.logger.info(f"🔄 Установлен интервал обновления GUI: {interval}с")
 
 
 def main():
