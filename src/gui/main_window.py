@@ -9,7 +9,6 @@ import sys
 import os
 import time
 import json
-import csv
 from datetime import datetime
 
 # Добавляем путь к модулям
@@ -59,42 +58,6 @@ class ObsidianTheme:
         
         return obsidian_theme
 
-class DangerTheme:
-    """Тема для опасных кнопок"""
-    
-    @staticmethod
-    def setup_theme():
-        with dpg.theme() as danger_theme:
-            with dpg.theme_component(dpg.mvButton):
-                dpg.add_theme_color(dpg.mvThemeCol_Button, [255, 60, 60, 200])
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, [255, 80, 80, 255])
-                dpg.add_theme_color(dpg.mvThemeCol_Text, [255, 255, 255])
-        return danger_theme
-
-class WarningTheme:
-    """Тема для предупреждающих кнопок"""
-    
-    @staticmethod
-    def setup_theme():
-        with dpg.theme() as warning_theme:
-            with dpg.theme_component(dpg.mvButton):
-                dpg.add_theme_color(dpg.mvThemeCol_Button, [255, 179, 64, 200])
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, [255, 199, 84, 255])
-                dpg.add_theme_color(dpg.mvThemeCol_Text, [255, 255, 255])
-        return warning_theme
-
-class SuccessTheme:
-    """Тема для успешных действий"""
-    
-    @staticmethod
-    def setup_theme():
-        with dpg.theme() as success_theme:
-            with dpg.theme_component(dpg.mvButton):
-                dpg.add_theme_color(dpg.mvThemeCol_Button, [72, 199, 116, 200])
-                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, [92, 219, 136, 255])
-                dpg.add_theme_color(dpg.mvThemeCol_Text, [255, 255, 255])
-        return success_theme
-
 class MainWindow:
     """
     Главный интерфейс RapidRecon с модульной архитектурой
@@ -115,40 +78,12 @@ class MainWindow:
         self.is_scanning = False
         self.is_paused = False
         self.current_scan_level = "Normal"
-        self.current_tab = "dashboard"  # Текущая активная вкладка
+        self.current_tab = "dashboard"
         
-        # Данные для тестирования
-        self.hosts_data = {
-            "192.168.1.1": {
-                "hostname": "router.local", 
-                "status": "active", 
-                "ports": [80, 443, 22], 
-                "services": ["http", "https", "ssh"],
-                "os": "Linux",
-                "last_seen": datetime.now().strftime("%H:%M:%S"),
-                "tags": ["router", "gateway"]
-            },
-            "192.168.1.100": {
-                "hostname": "pc-01.local", 
-                "status": "active", 
-                "ports": [3389, 445, 135], 
-                "services": ["rdp", "smb", "rpc"],
-                "os": "Windows 10",
-                "last_seen": datetime.now().strftime("%H:%M:%S"),
-                "tags": ["workstation"]
-            }
-        }
+        # Данные
+        self.hosts_data = {}
+        self.nodes_data = {}
         
-        self.nodes_data = {
-            "target_1": {
-                "id": "target_1",
-                "type": "initial_target",
-                "label": "example.com",
-                "data": {"ip": "93.184.216.34", "status": "active"},
-                "timestamp": time.time()
-            }
-        }
-
         # Инициализация GUI
         self.initialize_gui()
         
@@ -157,17 +92,10 @@ class MainWindow:
     def initialize_gui(self):
         """Инициализация GUI"""
         try:
-            # Проверяем доступность графической среды
-            if not self.check_gui_environment():
-                raise RuntimeError("Graphical environment not available")
-                
             dpg.create_context()
             
-            # Создание тем
+            # Создание темы
             self.obsidian_theme = ObsidianTheme.setup_theme()
-            self.danger_theme = DangerTheme.setup_theme()
-            self.warning_theme = WarningTheme.setup_theme()
-            self.success_theme = SuccessTheme.setup_theme()
             
             # Создание viewport
             dpg.create_viewport(
@@ -181,10 +109,6 @@ class MainWindow:
             # Создание главного окна
             self.create_main_window()
             
-            # Создание окон настроек
-            self.create_settings_window()
-            self.create_export_window()
-            
             # Настройка и показ GUI
             dpg.bind_theme(self.obsidian_theme)
             dpg.setup_dearpygui()
@@ -196,18 +120,8 @@ class MainWindow:
             self.logger.error(traceback.format_exc())
             raise
     
-    def check_gui_environment(self):
-        """Проверка доступности графической среды"""
-        try:
-            import dearpygui.dearpygui as dpg
-            dpg.create_context()
-            dpg.destroy_context()
-            return True
-        except Exception:
-            return False
-    
     def create_main_window(self):
-        """Создание главного окна с модульной архитектурой"""
+        """Создание главного окна"""
         with dpg.window(
             tag="main_window",
             label="RapidRecon - Advanced Network Reconnaissance",
@@ -218,81 +132,92 @@ class MainWindow:
             no_collapse=True,
             no_close=True
         ):
-            # Боковая панель управления
-            with dpg.child_window(tag="sidebar", width=280, border=False):
-                self.create_sidebar()
-            
-            # Основная область с контентом
+            # Основной контейнер
             with dpg.group(horizontal=True, width=-1, height=-1):
+                # Боковая панель
+                with dpg.child_window(tag="sidebar", width=280, border=False):
+                    self.create_sidebar()
+                
+                # Область контента
                 with dpg.child_window(tag="content_area", width=-1, border=False):
-                    # Показываем Dashboard по умолчанию
-                    self.show_dashboard()
+                    self.create_dashboard_tab()
     
     def create_sidebar(self):
-        """Создание боковой панели управления"""
-        # Логотип и статус
+        """Создание боковой панели"""
         with dpg.group():
             dpg.add_spacer(height=10)
             dpg.add_text("RapidRecon", color=[123, 97, 255])
             dpg.add_text("Security Scanner", color=[150, 150, 160])
             dpg.add_separator()
             
-            # Статус сканирования
+            # Статус
             with dpg.group(horizontal=True):
                 dpg.add_text("Status:")
                 dpg.add_text("Ready", tag="scan_status", color=[72, 199, 116])
-        
-        # Панель управления (ControlsPanel)
-        self.controls_panel.create_controls_panel("sidebar")
-        
-        # Быстрая навигация
-        with dpg.collapsing_header(label="Quick Navigation", default_open=True):
-            dpg.add_button(
-                label="Dashboard", 
-                width=-1,
-                callback=self.show_dashboard
-            )
-            dpg.add_button(
-                label="Network Tree",
-                width=-1, 
-                callback=self.show_network_tree
-            )
-            dpg.add_button(
-                label="Hosts Table",
-                width=-1,
-                callback=self.show_hosts_table
-            )
-            dpg.add_button(
-                label="Scope Manager", 
-                width=-1,
-                callback=self.show_scope_manager
-            )
-        
-        # Статистика
-        with dpg.collapsing_header(label="Statistics", default_open=True):
-            dpg.add_text("Network:")
-            dpg.add_text("Nodes: 1", tag="stat_nodes")
-            dpg.add_text("Hosts: 2", tag="stat_hosts")
-            dpg.add_text("Services: 6", tag="stat_services")
             
-            dpg.add_text("Security:")
-            dpg.add_text("Vulnerabilities: 0", tag="stat_vulns", color=[150, 150, 160])
-            dpg.add_text("Exploits: 0", tag="stat_exploits", color=[150, 150, 160])
+            # Controls Panel
+            self.controls_panel.create_controls_panel("sidebar")
+            
+            # Навигация
+            with dpg.collapsing_header(label="Navigation", default_open=True):
+                dpg.add_button(
+                    label="Dashboard", 
+                    width=-1,
+                    callback=lambda: self.switch_tab("dashboard")
+                )
+                dpg.add_button(
+                    label="Network Tree",
+                    width=-1, 
+                    callback=lambda: self.switch_tab("network_tree")
+                )
+                dpg.add_button(
+                    label="Hosts Table",
+                    width=-1,
+                    callback=lambda: self.switch_tab("hosts_table")
+                )
+                dpg.add_button(
+                    label="Scope Manager", 
+                    width=-1,
+                    callback=lambda: self.switch_tab("scope_manager")
+                )
+            
+            # Статистика
+            with dpg.collapsing_header(label="Statistics", default_open=True):
+                dpg.add_text("Network Discovery:")
+                dpg.add_text("Nodes: 0", tag="stat_nodes")
+                dpg.add_text("Hosts: 0", tag="stat_hosts")
+                dpg.add_text("Services: 0", tag="stat_services")
+                
+                dpg.add_text("Security Findings:")
+                dpg.add_text("Vulnerabilities: 0", tag="stat_vulns", color=[150, 150, 160])
+                dpg.add_text("Exploits: 0", tag="stat_exploits", color=[150, 150, 160])
     
-    def show_dashboard(self):
-        """Показать Dashboard"""
-        self.current_tab = "dashboard"
+    def switch_tab(self, tab_name: str):
+        """Переключение между вкладками"""
+        self.current_tab = tab_name
+        
+        # Очищаем область контента
         if dpg.does_item_exist("content_area"):
             dpg.delete_item("content_area", children_only=True)
         
+        # Создаем новую вкладку
+        if tab_name == "dashboard":
+            self.create_dashboard_tab()
+        elif tab_name == "network_tree":
+            self.create_network_tree_tab()
+        elif tab_name == "hosts_table":
+            self.create_hosts_table_tab()
+        elif tab_name == "scope_manager":
+            self.create_scope_manager_tab()
+    
+    def create_dashboard_tab(self):
+        """Создание вкладки Dashboard"""
         with dpg.group(parent="content_area"):
-            # Заголовок
             dpg.add_text("Dashboard - RapidRecon Scanner", color=[123, 97, 255])
             dpg.add_separator()
             
-            # Основной контент Dashboard
+            # Quick Start
             with dpg.group(horizontal=True):
-                # Левая колонка - быстрый старт
                 with dpg.child_window(width=400):
                     dpg.add_text("Quick Start")
                     dpg.add_separator()
@@ -322,7 +247,6 @@ class MainWindow:
                             callback=self.add_target_from_dashboard
                         )
                 
-                # Правая колонка - статус системы
                 with dpg.child_window(width=400):
                     dpg.add_text("System Status")
                     dpg.add_separator()
@@ -332,7 +256,7 @@ class MainWindow:
                     dpg.add_text("Last Scan: Never", color=[255, 179, 64])
                     dpg.add_text("Active Scans: 0", color=[150, 150, 160])
             
-            # Лог активности
+            # Activity Log
             dpg.add_spacer(height=10)
             dpg.add_text("Activity Log")
             dpg.add_input_text(
@@ -344,46 +268,34 @@ class MainWindow:
                 default_value="[00:00:00] System initialized\n[00:00:00] Ready for scanning\n\nEnter target and click 'Start Scan' to begin reconnaissance."
             )
     
-    def show_network_tree(self):
-        """Показать дерево сети"""
-        self.current_tab = "network_tree"
-        if dpg.does_item_exist("content_area"):
-            dpg.delete_item("content_area", children_only=True)
-        
+    def create_network_tree_tab(self):
+        """Создание вкладки Network Tree"""
         with dpg.group(parent="content_area"):
             dpg.add_text("Network Topology", color=[123, 97, 255])
             dpg.add_separator()
             
-            # Панель управления
+            # Controls
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Refresh", callback=self.refresh_network_tree)
                 dpg.add_button(label="Statistics", callback=self.show_network_statistics)
                 dpg.add_button(label="Export", callback=self.export_network_tree)
             
-            # Дерево сети
+            # Tree
             self.network_tree.create_tree_panel("content_area")
             self.network_tree.update_tree(self.nodes_data, self.hosts_data)
     
-    def show_hosts_table(self):
-        """Показать таблицу хостов"""
-        self.current_tab = "hosts_table"
-        if dpg.does_item_exist("content_area"):
-            dpg.delete_item("content_area", children_only=True)
-        
+    def create_hosts_table_tab(self):
+        """Создание вкладки Hosts Table"""
         with dpg.group(parent="content_area"):
             dpg.add_text("Discovered Hosts", color=[123, 97, 255])
             dpg.add_separator()
             
-            # Таблица хостов
+            # Table
             self.hosts_table.create_table_panel("content_area")
             self.hosts_table.update_table(self.hosts_data)
     
-    def show_scope_manager(self):
-        """Показать менеджер scope"""
-        self.current_tab = "scope_manager"
-        if dpg.does_item_exist("content_area"):
-            dpg.delete_item("content_area", children_only=True)
-        
+    def create_scope_manager_tab(self):
+        """Создание вкладки Scope Manager"""
         with dpg.group(parent="content_area"):
             dpg.add_text("Scope Manager", color=[123, 97, 255])
             dpg.add_separator()
@@ -391,23 +303,6 @@ class MainWindow:
             dpg.add_text("Add targets to scope for focused scanning")
             dpg.add_button(label="Import Scope", width=120)
             dpg.add_button(label="Export Scope", width=120)
-    
-    def create_settings_window(self):
-        """Окно настроек движка"""
-        with dpg.window(tag="settings_window", label="Settings", show=False, width=500, height=400):
-            dpg.add_text("Engine Settings")
-            dpg.add_input_text(label="Scan Directory", default_value="./scans/", width=-1)
-            dpg.add_slider_int(label="Threads", default_value=10, min_value=1, max_value=50)
-            dpg.add_button(label="Save", callback=self.save_engine_settings)
-    
-    def create_export_window(self):
-        """Окно экспорта данных"""
-        with dpg.window(tag="export_window", label="Export Data", show=False, width=400, height=300):
-            dpg.add_text("Export Options")
-            dpg.add_combo(items=["JSON", "CSV", "XML"], default_value="JSON", width=-1)
-            dpg.add_button(label="Export", callback=self.perform_export)
-    
-    # === ОСНОВНЫЕ МЕТОДЫ ===
     
     def quick_start_scan(self):
         """Быстрый запуск сканирования"""
@@ -419,7 +314,7 @@ class MainWindow:
         intensity = dpg.get_value("dashboard_intensity")
         self.update_activity_log(f"Starting {intensity} scan for: {target}")
         
-        # ИНТЕГРАЦИЯ С ДВИЖКОМ - запускаем настоящее сканирование
+        # ИНТЕГРАЦИЯ С ДВИЖКОМ
         if hasattr(self.engine, 'add_initial_target'):
             self.engine.add_initial_target(target)
             self.update_activity_log(f"Target {target} added to engine queue")
@@ -433,7 +328,6 @@ class MainWindow:
         target = dpg.get_value("dashboard_target")
         if target:
             self.update_activity_log(f"Added target to scope: {target}")
-            # Добавляем в движок
             if hasattr(self.engine, 'add_to_scope'):
                 self.engine.add_to_scope(target)
         else:
@@ -459,45 +353,22 @@ class MainWindow:
     
     def show_network_statistics(self):
         """Показать статистику сети"""
-        stats = self.calculate_statistics()
-        self.update_activity_log(f"Network stats: {stats}")
+        self.update_activity_log("Showing network statistics")
     
     def export_network_tree(self):
         """Экспорт дерева сети"""
         self.update_activity_log("Exporting network tree...")
     
-    def calculate_statistics(self):
-        """Расчет статистики"""
-        return {
-            "Nodes": len(self.nodes_data),
-            "Hosts": len(self.hosts_data),
-            "Services": sum(len(h.get('services', [])) for h in self.hosts_data.values())
-        }
-    
-    def save_engine_settings(self):
-        """Сохранение настроек движка"""
-        self.update_activity_log("Engine settings saved")
-        dpg.hide_item("settings_window")
-    
-    def perform_export(self):
-        """Выполнение экспорта данных"""
-        self.update_activity_log("Data exported")
-        dpg.hide_item("export_window")
-    
-    def show_settings(self):
-        """Показать настройки"""
-        dpg.show_item("settings_window")
-    
     def handle_engine_event(self, event_type: str, data: Any = None):
-        """Обработка событий от движка - КЛЮЧЕВАЯ ФУНКЦИЯ"""
+        """Обработка событий от движка"""
         try:
-            if event_type == 'node_discovered':
+            if event_type in ['node_discovered', 'node_added']:
                 # Обновляем данные из движка
                 if hasattr(self.engine, 'discovered_nodes'):
-                    self.nodes_data.update(self.engine.discovered_nodes)
+                    self.nodes_data = self.engine.discovered_nodes.copy()
                 
                 if hasattr(self.engine, 'hosts_data'):
-                    self.hosts_data.update(self.engine.hosts_data)
+                    self.hosts_data = self.engine.hosts_data.copy()
                 
                 # Обновляем UI
                 if self.current_tab == "network_tree":
@@ -505,11 +376,27 @@ class MainWindow:
                 elif self.current_tab == "hosts_table":
                     self.hosts_table.update_table(self.hosts_data)
                 
-                # Логируем событие
-                self.update_activity_log(f"New node discovered: {data}")
+                # Обновляем статистику
+                self.update_statistics()
+                
+                self.update_activity_log(f"New data: {event_type}")
                 
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
+    
+    def update_statistics(self):
+        """Обновление статистики"""
+        try:
+            total_nodes = len(self.nodes_data)
+            total_hosts = len(self.hosts_data)
+            total_services = sum(len(h.get('services', [])) for h in self.hosts_data.values())
+            
+            dpg.set_value("stat_nodes", f"Nodes: {total_nodes}")
+            dpg.set_value("stat_hosts", f"Hosts: {total_hosts}")
+            dpg.set_value("stat_services", f"Services: {total_services}")
+            
+        except Exception as e:
+            self.logger.error(f"Error updating statistics: {e}")
     
     def run(self):
         """Запуск GUI"""
@@ -533,14 +420,14 @@ class MainWindow:
             if hasattr(self.engine, 'discovered_nodes'):
                 new_nodes = self.engine.discovered_nodes
                 if new_nodes != self.nodes_data:
-                    self.nodes_data.update(new_nodes)
-                    self.handle_engine_event('node_discovered', "New nodes found")
+                    self.nodes_data = new_nodes.copy()
+                    self.handle_engine_event('node_discovered')
             
             if hasattr(self.engine, 'hosts_data'):
                 new_hosts = self.engine.hosts_data
                 if new_hosts != self.hosts_data:
-                    self.hosts_data.update(new_hosts)
-                    self.handle_engine_event('node_discovered', "New hosts found")
+                    self.hosts_data = new_hosts.copy()
+                    self.handle_engine_event('node_discovered')
                     
         except Exception as e:
             self.logger.error(f"Error checking engine updates: {e}")
