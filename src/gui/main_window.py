@@ -94,50 +94,15 @@ class MainWindow:
         self.monitor_thread = None
         self.monitor_running = False
         
+        # Флаги инициализации GUI элементов
+        self.gui_initialized = False
+        self.stat_items = {}  # Словарь для хранения элементов статистики
+        
         # Инициализация GUI
         self.initialize_gui()
         
-        # Запуск мониторинга движка
-        self.start_engine_monitor()
-        
         self.logger.info("Графический интерфейс инициализирован")
 
-    def start_engine_monitor(self):
-        """Запуск мониторинга состояния движка"""
-        self.monitor_running = True
-        self.monitor_thread = threading.Thread(target=self._engine_monitor_loop, daemon=True)
-        self.monitor_thread.start()
-        self.logger.info("Мониторинг движка запущен")
-
-    def _engine_monitor_loop(self):
-        """Цикл мониторинга состояния движка"""
-        while self.monitor_running:
-            try:
-                # Проверяем состояние каждую секунду
-                time.sleep(1.0)
-                
-                # Обновляем данные из движка
-                self.update_engine_data()
-                
-                # Обновляем статистику в GUI потоке
-                if hasattr(self, 'last_stats_update'):
-                    current_time = time.time()
-                    if current_time - self.last_stats_update >= self.stats_update_interval:
-                        self._schedule_gui_update(self.update_statistics)
-                        self.last_stats_update = current_time
-                        
-            except Exception as e:
-                self.logger.error(f"Ошибка в мониторе движка: {e}")
-
-    def _schedule_gui_update(self, callback):
-        """Запланировать обновление GUI в основном потоке"""
-        # Этот метод будет вызывать callback в основном потоке GUI
-        # В DearPyGui это делается через колбэки
-        try:
-            callback()
-        except Exception as e:
-            self.logger.error(f"Ошибка при обновлении GUI: {e}")
-    
     def initialize_gui(self):
         """Инициализация GUI"""
         try:
@@ -164,10 +129,45 @@ class MainWindow:
             dpg.show_viewport()
             dpg.set_primary_window("main_window", True)
             
+            self.gui_initialized = True
+            
+            # Запуск мониторинга движка после инициализации GUI
+            self.start_engine_monitor()
+            
         except Exception as e:
             self.logger.error(f"Ошибка инициализации GUI: {e}")
             self.logger.error(traceback.format_exc())
             raise
+
+    def start_engine_monitor(self):
+        """Запуск мониторинга состояния движка"""
+        if not self.gui_initialized:
+            self.logger.warning("GUI не инициализирован, откладываем мониторинг")
+            return
+            
+        self.monitor_running = True
+        self.monitor_thread = threading.Thread(target=self._engine_monitor_loop, daemon=True)
+        self.monitor_thread.start()
+        self.logger.info("Мониторинг движка запущен")
+
+    def _engine_monitor_loop(self):
+        """Цикл мониторинга состояния движка"""
+        while self.monitor_running:
+            try:
+                # Проверяем состояние каждую секунду
+                time.sleep(1.0)
+                
+                # Обновляем данные из движка
+                self.update_engine_data()
+                
+                # Обновляем статистику в GUI потоке
+                current_time = time.time()
+                if current_time - self.last_stats_update >= self.stats_update_interval:
+                    self.update_statistics()
+                    self.last_stats_update = current_time
+                        
+            except Exception as e:
+                self.logger.error(f"Ошибка в мониторе движка: {e}")
     
     def create_main_window(self):
         """Создание главного окна"""
@@ -202,7 +202,7 @@ class MainWindow:
             # Статус
             with dpg.group(horizontal=True):
                 dpg.add_text("Status:")
-                dpg.add_text("Ready", tag="scan_status", color=[72, 199, 116])
+                self.stat_items['scan_status'] = dpg.add_text("Ready", color=[72, 199, 116])
             
             # Controls Panel
             self.controls_panel.create_controls_panel("sidebar")
@@ -233,14 +233,14 @@ class MainWindow:
             # Статистика
             with dpg.collapsing_header(label="Statistics", default_open=True):
                 dpg.add_text("Network Discovery:")
-                dpg.add_text("Nodes: 0", tag="stat_nodes")
-                dpg.add_text("Hosts: 0", tag="stat_hosts")
-                dpg.add_text("Services: 0", tag="stat_services")
-                dpg.add_text("Ports: 0", tag="stat_ports")
+                self.stat_items['stat_nodes'] = dpg.add_text("Nodes: 0")
+                self.stat_items['stat_hosts'] = dpg.add_text("Hosts: 0")
+                self.stat_items['stat_services'] = dpg.add_text("Services: 0")
+                self.stat_items['stat_ports'] = dpg.add_text("Ports: 0")
                 
                 dpg.add_text("Security Findings:")
-                dpg.add_text("Vulnerabilities: 0", tag="stat_vulns", color=[150, 150, 160])
-                dpg.add_text("Exploits: 0", tag="stat_exploits", color=[150, 150, 160])
+                self.stat_items['stat_vulns'] = dpg.add_text("Vulnerabilities: 0", color=[150, 150, 160])
+                self.stat_items['stat_exploits'] = dpg.add_text("Exploits: 0", color=[150, 150, 160])
     
     def switch_tab(self, tab_name: str):
         """Переключение между вкладками"""
@@ -311,12 +311,12 @@ class MainWindow:
                     dpg.add_text("Engine: Running", color=[72, 199, 116])
                     dpg.add_text("Modules: 6/6 Ready", color=[72, 199, 116])
                     dpg.add_text("Last Scan: Never", color=[255, 179, 64])
-                    dpg.add_text("Active Scans: 0", tag="stat_active_scans", color=[150, 150, 160])
+                    self.stat_items['stat_active_scans'] = dpg.add_text("Active Scans: 0", color=[150, 150, 160])
             
             # Activity Log
             dpg.add_spacer(height=10)
             dpg.add_text("Activity Log")
-            dpg.add_input_text(
+            self.stat_items['activity_log'] = dpg.add_input_text(
                 tag="activity_log",
                 multiline=True,
                 height=200,
@@ -396,6 +396,7 @@ class MainWindow:
                 if hasattr(self.engine, 'pending_scans'):
                     queue_size = self.engine.pending_scans.qsize()
                     self.update_activity_log(f"📋 Scan queue size: {queue_size}")
+                    self.logger.info(f"Queue size after adding target: {queue_size}")
                 
             except Exception as e:
                 self.logger.error(f"❌ Error in add_initial_target: {e}")
@@ -427,6 +428,17 @@ class MainWindow:
                     )
                     engine_thread.start()
                     self.update_activity_log("🔧 Engine processing started")
+                    
+                    # Даем время на запуск
+                    time.sleep(0.5)
+                    
+                    # Проверяем состояние после запуска
+                    if hasattr(self.engine, 'is_running'):
+                        self.logger.info(f"Engine running state after start: {self.engine.is_running}")
+                    if hasattr(self.engine, 'pending_scans'):
+                        queue_size = self.engine.pending_scans.qsize()
+                        self.logger.info(f"Queue size after engine start: {queue_size}")
+                        
                 else:
                     self.update_activity_log("⚡ Engine is already running")
             else:
@@ -452,6 +464,7 @@ class MainWindow:
             
         except Exception as e:
             self.logger.error(f"❌ Engine processing error: {e}")
+            self.logger.error(traceback.format_exc())
             self.update_activity_log(f"Engine error: {e}")
     
     def force_engine_start(self):
@@ -487,20 +500,26 @@ class MainWindow:
     
     def update_scan_state(self):
         """Обновление состояния сканирования"""
-        if self.is_scanning:
-            dpg.set_value("scan_status", "Scanning")
-            dpg.configure_item("scan_status", color=[255, 179, 64])  # warning color
-        else:
-            dpg.set_value("scan_status", "Ready")
-            dpg.configure_item("scan_status", color=[72, 199, 116])  # success color
+        try:
+            if self.is_scanning:
+                if 'scan_status' in self.stat_items and dpg.does_item_exist(self.stat_items['scan_status']):
+                    dpg.set_value(self.stat_items['scan_status'], "Scanning")
+                    dpg.configure_item(self.stat_items['scan_status'], color=[255, 179, 64])  # warning color
+            else:
+                if 'scan_status' in self.stat_items and dpg.does_item_exist(self.stat_items['scan_status']):
+                    dpg.set_value(self.stat_items['scan_status'], "Ready")
+                    dpg.configure_item(self.stat_items['scan_status'], color=[72, 199, 116])  # success color
+        except Exception as e:
+            self.logger.error(f"Error updating scan state: {e}")
     
     def update_activity_log(self, message: str):
         """Обновление лога активности"""
         try:
-            current_log = dpg.get_value("activity_log")
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            new_log = f"[{timestamp}] {message}\n{current_log}"
-            dpg.set_value("activity_log", new_log)
+            if 'activity_log' in self.stat_items and dpg.does_item_exist(self.stat_items['activity_log']):
+                current_log = dpg.get_value(self.stat_items['activity_log'])
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                new_log = f"[{timestamp}] {message}\n{current_log}"
+                dpg.set_value(self.stat_items['activity_log'], new_log)
         except Exception as e:
             self.logger.error(f"Error updating activity log: {e}")
     
@@ -647,6 +666,9 @@ class MainWindow:
     def update_statistics(self):
         """Обновление статистики на боковой панели"""
         try:
+            if not self.gui_initialized:
+                return
+                
             # Рассчитываем статистику
             total_nodes = len(self.nodes_data)
             total_hosts = len(self.hosts_data)
@@ -657,18 +679,29 @@ class MainWindow:
             engine_stats = self.engine.get_statistics() if hasattr(self.engine, 'get_statistics') else {}
             total_vulns = engine_stats.get('vulnerabilities_found', 0)
             total_exploits = engine_stats.get('exploits_successful', 0)
-            
-            # Обновляем UI
-            dpg.set_value("stat_nodes", f"Nodes: {total_nodes}")
-            dpg.set_value("stat_hosts", f"Hosts: {total_hosts}")
-            dpg.set_value("stat_services", f"Services: {total_services}")
-            dpg.set_value("stat_ports", f"Ports: {total_ports}")
-            dpg.set_value("stat_vulns", f"Vulnerabilities: {total_vulns}")
-            dpg.set_value("stat_exploits", f"Exploits: {total_exploits}")
-            
-            # Обновляем активные сканы
             pending_tasks = engine_stats.get('pending_tasks', 0)
-            dpg.set_value("stat_active_scans", f"Active Scans: {pending_tasks}")
+            
+            # Обновляем UI только если элементы существуют
+            if 'stat_nodes' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_nodes']):
+                dpg.set_value(self.stat_items['stat_nodes'], f"Nodes: {total_nodes}")
+            
+            if 'stat_hosts' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_hosts']):
+                dpg.set_value(self.stat_items['stat_hosts'], f"Hosts: {total_hosts}")
+            
+            if 'stat_services' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_services']):
+                dpg.set_value(self.stat_items['stat_services'], f"Services: {total_services}")
+            
+            if 'stat_ports' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_ports']):
+                dpg.set_value(self.stat_items['stat_ports'], f"Ports: {total_ports}")
+            
+            if 'stat_vulns' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_vulns']):
+                dpg.set_value(self.stat_items['stat_vulns'], f"Vulnerabilities: {total_vulns}")
+            
+            if 'stat_exploits' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_exploits']):
+                dpg.set_value(self.stat_items['stat_exploits'], f"Exploits: {total_exploits}")
+            
+            if 'stat_active_scans' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_active_scans']):
+                dpg.set_value(self.stat_items['stat_active_scans'], f"Active Scans: {pending_tasks}")
             
         except Exception as e:
             self.logger.error(f"Error updating statistics: {e}")
