@@ -1,5 +1,5 @@
 """
-Главное окно RapidRecon в стиле Obsidian - ПОЛНАЯ СТАБИЛЬНАЯ ВЕРСИЯ
+Главное окно RapidRecon в стиле Obsidian - ИСПРАВЛЕННАЯ ВЕРСИЯ
 """
 import dearpygui.dearpygui as dpg
 from typing import Dict, Any, List, Optional, Tuple
@@ -690,9 +690,6 @@ class MainWindow:
                 dpg.add_button(label="🎯 Add Selected Targets", callback=self.add_selected_targets)
                 dpg.add_button(label="❌ Close", callback=lambda: dpg.hide_item("targets_window"))
 
-    # Все остальные методы остаются без изменений (quick_start_scan, stop_scan, start_scan, и т.д.)
-    # ... [все остальные методы из предыдущей версии]
-
     def quick_start_scan(self):
         """Быстрый запуск сканирования"""
         try:
@@ -766,10 +763,8 @@ class MainWindow:
             self.add_to_log(f"❌ Error starting advanced scan: {e}")
         return False
 
-    # ... [все остальные методы обработки событий, обновления интерфейса и т.д.]
-
     def handle_engine_event(self, event_type: str, data: Any = None):
-        """Обработка событий от движка"""
+        """Обработка событий от движка - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         try:
             self.logger.info(f"GUI received engine event: {event_type}")
             
@@ -784,8 +779,10 @@ class MainWindow:
             elif event_type == 'vulnerability_found':
                 self._handle_vulnerability_found(data)
             
+            # Обновляем интерфейс после каждого события
             self.update_graph()
             self._update_statistics()
+            self._update_nodes_tree()
                 
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
@@ -793,20 +790,16 @@ class MainWindow:
     def _handle_node_added(self, node):
         """Обработка добавления узла"""
         try:
-            if hasattr(node, 'node_id'):
-                node_data = self._convert_scan_node_to_dict(node)
-                self.add_to_log(f"🎯 Target added: {node_data.get('data', 'Unknown')}")
-                self._add_node_to_graph(node.node_id, node_data)
+            self.add_to_log(f"🎯 Target added: {getattr(node, 'data', 'Unknown')}")
+            self._process_scan_node(node)
         except Exception as e:
             self.logger.error(f"Error handling node added: {e}")
     
     def _handle_node_discovered(self, node):
         """Обработка обнаруженного узла"""
         try:
-            if hasattr(node, 'node_id'):
-                node_data = self._convert_scan_node_to_dict(node)
-                self.add_to_log(f"🔍 Node discovered: {node_data.get('data', 'Unknown')}")
-                self._add_node_to_graph(node.node_id, node_data)
+            self.add_to_log(f"🔍 Node discovered: {getattr(node, 'data', 'Unknown')}")
+            self._process_scan_node(node)
         except Exception as e:
             self.logger.error(f"Error handling node discovered: {e}")
     
@@ -815,14 +808,17 @@ class MainWindow:
         try:
             self.add_to_log(f"⚙️ Module results received")
             
+            # Обрабатываем основную задачу
             task = results.get('task')
-            if task and hasattr(task, 'node_id'):
-                task_data = self._convert_scan_node_to_dict(task)
-                self._add_node_to_graph(task.node_id, task_data)
+            if task:
+                self._process_scan_node(task)
             
+            # Обрабатываем открытые порты
             if 'open_ports' in results:
                 for ip, ports in results['open_ports'].items():
                     if ports:
+                        self.add_to_log(f"🔓 Open ports found on {ip}: {ports}")
+                        # Создаем узел для открытых портов
                         port_node_data = {
                             'type': 'open_ports',
                             'data': f"{ip} ports",
@@ -830,69 +826,79 @@ class MainWindow:
                             'ip': ip
                         }
                         port_node_id = self.graph.add_node(port_node_data)
+                        # Связываем с хостом
                         self._add_edge_to_host(ip, port_node_id, 'port')
             
         except Exception as e:
             self.logger.error(f"Error handling module results: {e}")
     
-    def _handle_scan_completed(self):
-        """Обработка завершения сканирования"""
-        self.add_to_log("✅ Scan completed")
-        self.is_scanning = False
-        dpg.show_item("quick_scan_button")
-        dpg.hide_item("quick_stop_button")
-        dpg.show_item("adv_scan_button")
-        dpg.hide_item("adv_stop_button")
-    
-    def _handle_vulnerability_found(self, data):
-        """Обработка найденной уязвимости"""
-        self.add_to_log(f"🔴 Vulnerability found: {data}")
-        current_vulns = int(dpg.get_value("stat_vulns").split(": ")[1])
-        dpg.set_value("stat_vulns", f"Vulnerabilities: {current_vulns + 1}")
-    
-    def _convert_scan_node_to_dict(self, scan_node) -> Dict[str, Any]:
-        """Конвертировать ScanNode в словарь для графа"""
+    def _process_scan_node(self, scan_node):
+        """Обработать ScanNode и добавить в граф"""
         try:
-            node_dict = {
-                'type': getattr(scan_node, 'type', 'unknown').value if hasattr(scan_node, 'type') else 'unknown',
-                'data': getattr(scan_node, 'data', 'Unknown'),
-                'source': getattr(scan_node, 'source', 'unknown'),
-                'module': getattr(scan_node, 'module', 'unknown'),
-            }
-            
-            # Определяем тип узла
-            if node_dict['type'] == 'initial_target':
-                node_dict['type'] = 'initial_target'
-            elif node_dict['type'] == 'subdomain':
-                node_dict['type'] = 'subdomain'
-            elif node_dict['type'] == 'active_host':
-                node_dict['type'] = 'active_host'
-            elif 'port' in node_dict['module']:
-                node_dict['type'] = 'open_ports'
-            elif 'vulnerability' in node_dict['module']:
-                node_dict['type'] = 'vulnerability'
+            if not hasattr(scan_node, 'node_id'):
+                return
                 
-            return node_dict
-        except Exception as e:
-            self.logger.error(f"Error converting scan node: {e}")
-            return {'type': 'unknown', 'data': 'Conversion error'}
-    
-    def _add_node_to_graph(self, engine_node_id: str, node_data: Dict[str, Any]):
-        """Добавить узел в граф"""
-        try:
-            if engine_node_id in self.node_id_map:
-                return self.node_id_map[engine_node_id]
+            node_data = self._convert_scan_node_to_dict(scan_node)
+            graph_node_id = self._add_node_to_graph(scan_node.node_id, node_data)
             
-            graph_node_id = self.graph.add_node(node_data)
             if graph_node_id != -1:
-                self.node_id_map[engine_node_id] = graph_node_id
-                
-                source = node_data.get('source')
+                # Добавляем связь с источником если есть
+                source = getattr(scan_node, 'source', None)
                 if source and source in self.node_id_map:
                     source_graph_id = self.node_id_map[source]
                     edge_type = self._determine_edge_type(node_data)
                     self.graph.add_edge(source_graph_id, graph_node_id, edge_type)
+                    
+        except Exception as e:
+            self.logger.error(f"Error processing scan node: {e}")
+    
+    def _convert_scan_node_to_dict(self, scan_node) -> Dict[str, Any]:
+        """Конвертировать ScanNode в словарь для графа"""
+        try:
+            # Получаем основные атрибуты
+            node_type = getattr(scan_node, 'type', 'unknown')
+            if hasattr(node_type, 'value'):
+                node_type = node_type.value
+            
+            node_data = {
+                'type': node_type,
+                'data': getattr(scan_node, 'data', 'Unknown'),
+                'source': getattr(scan_node, 'source', 'unknown'),
+                'module': getattr(scan_node, 'module', 'unknown'),
+                'depth': getattr(scan_node, 'depth', 0),
+                'timestamp': getattr(scan_node, 'timestamp', 0)
+            }
+            
+            # Определяем тип узла для визуализации
+            if node_data['type'] == 'initial_target':
+                node_data['type'] = 'initial_target'
+            elif node_data['type'] == 'subdomain':
+                node_data['type'] = 'subdomain'
+            elif node_data['type'] == 'active_host':
+                node_data['type'] = 'active_host'
+            elif 'port' in node_data['module']:
+                node_data['type'] = 'open_ports'
+            elif 'vulnerability' in node_data['module']:
+                node_data['type'] = 'vulnerability'
+            elif 'exploit' in node_data['module']:
+                node_data['type'] = 'exploitation'
                 
+            return node_data
+        except Exception as e:
+            self.logger.error(f"Error converting scan node: {e}")
+            return {'type': 'unknown', 'data': 'Conversion error'}
+    
+    def _add_node_to_graph(self, engine_node_id: str, node_data: Dict[str, Any]) -> int:
+        """Добавить узел в граф"""
+        try:
+            # Проверяем, не добавлен ли уже узел
+            if engine_node_id in self.node_id_map:
+                return self.node_id_map[engine_node_id]
+            
+            # Добавляем узел в граф
+            graph_node_id = self.graph.add_node(node_data)
+            if graph_node_id != -1:
+                self.node_id_map[engine_node_id] = graph_node_id
                 return graph_node_id
             return -1
         except Exception as e:
@@ -902,10 +908,12 @@ class MainWindow:
     def _add_edge_to_host(self, ip: str, target_node_id: int, edge_type: str):
         """Добавить связь к хосту по IP"""
         try:
+            # Ищем узел с соответствующим IP
             for engine_id, graph_id in self.node_id_map.items():
                 node = self.graph.nodes.get(graph_id)
                 if node and node.get('data') == ip:
                     self.graph.add_edge(graph_id, target_node_id, edge_type)
+                    self.add_to_log(f"🔗 Connected {ip} to ports node")
                     break
         except Exception as e:
             self.logger.error(f"Error adding edge to host: {e}")
@@ -921,8 +929,25 @@ class MainWindow:
             return 'port'
         elif 'vulnerability' in module:
             return 'vulnerability'
+        elif 'exploit' in module:
+            return 'exploitation'
         else:
             return 'normal'
+    
+    def _handle_scan_completed(self):
+        """Обработка завершения сканирования"""
+        self.add_to_log("✅ Scan completed")
+        self.is_scanning = False
+        dpg.show_item("quick_scan_button")
+        dpg.hide_item("quick_stop_button")
+        dpg.show_item("adv_scan_button")
+        dpg.hide_item("adv_stop_button")
+    
+    def _handle_vulnerability_found(self, data):
+        """Обработка найденной уязвимости"""
+        self.add_to_log(f"🔴 Vulnerability found: {data}")
+        current_vulns = int(dpg.get_value("stat_vulns").split(": ")[1])
+        dpg.set_value("stat_vulns", f"Vulnerabilities: {current_vulns + 1}")
     
     def update_graph(self):
         """Обновление графа"""
@@ -953,6 +978,37 @@ class MainWindow:
         except Exception as e:
             self.logger.error(f"Error updating statistics: {e}")
     
+    def _update_nodes_tree(self):
+        """Обновление дерева узлов"""
+        try:
+            if not dpg.does_item_exist("nodes_tree"):
+                return
+                
+            # Очищаем старое дерево
+            dpg.delete_item("nodes_tree", children_only=True)
+            
+            # Обновляем заголовок
+            dpg.set_value("nodes_tree", f"Network Topology ({len(self.graph.nodes)} nodes)")
+            
+            # Группируем узлы по типам
+            nodes_by_type = {}
+            for node_id, node in self.graph.nodes.items():
+                node_type = node['type']
+                if node_type not in nodes_by_type:
+                    nodes_by_type[node_type] = []
+                nodes_by_type[node_type].append(node)
+            
+            # Добавляем узлы в дерево
+            for node_type, nodes in nodes_by_type.items():
+                with dpg.tree_node(label=f"{node_type.title()} ({len(nodes)})", parent="nodes_tree"):
+                    for node in nodes:
+                        with dpg.tree_node(label=node['label']):
+                            details = self.graph.get_node_details(node['id'])
+                            dpg.add_text(details)
+                            
+        except Exception as e:
+            self.logger.error(f"Error updating nodes tree: {e}")
+    
     def add_to_log(self, message: str):
         """Добавить сообщение в лог"""
         try:
@@ -981,6 +1037,7 @@ class MainWindow:
                     try:
                         self._update_statistics()
                         self.update_graph()
+                        self._update_nodes_tree()
                     except Exception as e:
                         self.logger.error(f"Error in UI update: {e}")
         
@@ -989,14 +1046,6 @@ class MainWindow:
     def _on_scan_level_change(self):
         """Обработчик изменения уровня сканирования"""
         scan_level = dpg.get_value("scan_level")
-        level_map = {
-            "🚀 Stealth": "stealth",
-            "⚡ Normal": "normal", 
-            "💥 Aggressive": "aggressive",
-            "🔥 Full Attack": "aggressive",
-            "💀 Pentest": "aggressive"
-        }
-        profile = level_map.get(scan_level, "normal")
         self.add_to_log(f"🎛️ Scan intensity: {scan_level}")
     
     def show_settings(self):
@@ -1120,8 +1169,11 @@ class MainWindow:
         """Уничтожение GUI"""
         try:
             self.logger.info("🧹 Очистка графического интерфейса...")
-            if dpg.is_dearpygui_initialized():
+            # Исправляем ошибку с is_dearpygui_initialized
+            try:
                 dpg.destroy_context()
+            except Exception as e:
+                self.logger.warning(f"Warning during context destruction: {e}")
             self.logger.info("✅ Графический интерфейс уничтожен")
         except Exception as e:
             self.logger.error(f"❌ Ошибка уничтожения GUI: {e}")
