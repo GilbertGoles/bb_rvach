@@ -8,6 +8,7 @@ import threading
 import time
 import json
 from datetime import datetime
+import logging
 
 class GraphView:
     """Компонент для визуализации графа обнаруженных узлов"""
@@ -67,7 +68,10 @@ class GraphView:
             'active_host': (200, 100, 100),
             'open_ports': (150, 100, 200),
             'service': (100, 200, 200),
-            'vulnerability': (200, 100, 150)
+            'vulnerability': (200, 100, 150),
+            'exploitation': (255, 50, 50),
+            'exploitation_success': (255, 0, 0),
+            'internal_scan': (50, 150, 255)
         }
         
         color = node_colors.get(node_data.get('type', 'custom'), (150, 150, 150))
@@ -147,87 +151,6 @@ class GraphView:
         
         return filename
 
-class ConfigManager:
-    """Менеджер конфигурации профилей сканирования"""
-    
-    def __init__(self, config_file: str = "scan_profiles.json"):
-        self.config_file = config_file
-        self.profiles = self.load_profiles()
-        self.active_profile = "normal"
-    
-    def load_profiles(self) -> Dict[str, Any]:
-        """Загрузка профилей из файла"""
-        default_profiles = {
-            "stealth": {
-                "rate_limit": 5,
-                "max_depth": 2,
-                "timeout": 3.0,
-                "max_concurrent_tasks": 2,
-                "description": "Медленное и скрытное сканирование"
-            },
-            "normal": {
-                "rate_limit": 10,
-                "max_depth": 3,
-                "timeout": 2.0,
-                "max_concurrent_tasks": 5,
-                "description": "Сбалансированное сканирование"
-            },
-            "aggressive": {
-                "rate_limit": 50,
-                "max_depth": 5,
-                "timeout": 1.0,
-                "max_concurrent_tasks": 10,
-                "description": "Быстрое и глубокое сканирование"
-            }
-        }
-        
-        try:
-            with open(self.config_file, 'r', encoding='utf-8') as f:
-                loaded_profiles = json.load(f)
-                # Обновляем дефолтные профили загруженными
-                default_profiles.update(loaded_profiles)
-        except FileNotFoundError:
-            # Создаем файл с дефолтными профилями
-            self.save_profiles(default_profiles)
-        
-        return default_profiles
-    
-    def save_profiles(self, profiles: Dict[str, Any] = None):
-        """Сохранение профилей в файл"""
-        if profiles is None:
-            profiles = self.profiles
-        
-        try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(profiles, f, indent=2, ensure_ascii=False)
-            return True
-        except Exception as e:
-            print(f"Ошибка сохранения профилей: {e}")
-            return False
-    
-    def set_profile(self, profile_name: str) -> bool:
-        """Установка активного профиля"""
-        if profile_name in self.profiles:
-            self.active_profile = profile_name
-            return True
-        return False
-    
-    def get_active_config(self) -> Dict[str, Any]:
-        """Получение конфигурации активного профиля"""
-        return self.profiles.get(self.active_profile, {})
-    
-    def get_profile_description(self, profile_name: str) -> str:
-        """Получение описания профиля"""
-        profile = self.profiles.get(profile_name, {})
-        return profile.get('description', 'Нет описания')
-    
-    def update_profile(self, profile_name: str, config: Dict[str, Any]):
-        """Обновление профиля"""
-        if profile_name in self.profiles:
-            self.profiles[profile_name].update(config)
-            return True
-        return False
-
 class MainWindow:
     """
     Главный интерфейс RapidRecon с расширенным функционалом
@@ -237,10 +160,10 @@ class MainWindow:
         self.engine = engine
         self.module_manager = module_manager
         self.graph_view = GraphView()
-        self.config_manager = ConfigManager()
         self.is_scanning = False
         self.scan_stats = {}
         self.real_time_data = []
+        self.logger = logging.getLogger('RapidRecon.GUI')
         self.setup_gui()
         
         # Настройка темы
@@ -325,8 +248,8 @@ class MainWindow:
             with dpg.group(horizontal=True):
                 dpg.add_text("Профиль:")
                 dpg.add_combo(
-                    items=list(self.config_manager.profiles.keys()),
-                    default_value=self.config_manager.active_profile,
+                    items=self.engine.get_available_profiles(),
+                    default_value=self.engine.config_manager.active_profile,
                     tag="scan_profile",
                     callback=self.on_profile_change,
                     width=120
@@ -345,7 +268,7 @@ class MainWindow:
                         dpg.add_text("Скорость сканирования:")
                         dpg.add_slider_int(
                             label="Пакетов/секунду",
-                            default_value=self.config_manager.get_active_config().get("rate_limit", 10),
+                            default_value=self.engine.rate_limit,
                             min_value=1, max_value=1000,
                             tag="rate_limit",
                             callback=self.update_rate_limit
@@ -362,7 +285,7 @@ class MainWindow:
                         dpg.add_text("Глубина сканирования:")
                         dpg.add_slider_int(
                             label="Макс. глубина",
-                            default_value=self.config_manager.get_active_config().get("max_depth", 3),
+                            default_value=self.engine.max_depth,
                             min_value=1, max_value=10,
                             tag="max_depth",
                             callback=self.update_max_depth
@@ -444,14 +367,12 @@ class MainWindow:
                 with dpg.child_window(width=400):
                     dpg.add_text("Доступные модули:")
                     dpg.add_listbox(
-                        items=[],
+                        items=list(self.engine.active_modules.keys()),
                         tag="modules_list",
                         num_items=15,
                         callback=self.on_module_select
                     )
                     with dpg.group(horizontal=True):
-                        dpg.add_button(label="Загрузить", callback=self.load_selected_module)
-                        dpg.add_button(label="Выгрузить", callback=self.unload_selected_module)
                         dpg.add_button(label="Обновить", callback=self.refresh_modules_list)
                 
                 # Информация о модуле
@@ -473,24 +394,40 @@ class MainWindow:
     def setup_callbacks(self):
         """Настройка callback функций"""
         # Регистрация callback для обновления UI в реальном времени
-        if hasattr(self.engine, 'callbacks'):
-            self.engine.callbacks['node_discovered'] = self.on_node_discovered
-            self.engine.callbacks['scan_completed'] = self.on_scan_completed
+        self.engine.register_callback('node_discovered', self.on_node_discovered)
+        self.engine.register_callback('scan_completed', self.on_scan_completed)
+        self.engine.register_callback('task_failed', self.on_task_failed)
+        self.engine.register_callback('vulnerability_found', self.on_vulnerability_found)
+    
+    def handle_engine_event(self, event_type: str, data: Any = None):
+        """Обработчик событий от движка"""
+        try:
+            if event_type in ['node_discovered', 'node_added', 'task_completed']:
+                self.update_graph_from_engine()
+                self.update_statistics()
+            elif event_type == 'scan_started':
+                self.on_scan_started(data)
+            elif event_type == 'scan_completed':
+                self.on_scan_completed(data)
+            elif event_type == 'task_failed':
+                self.on_task_failed(data)
+            elif event_type == 'vulnerability_found':
+                self.on_vulnerability_found(data)
+            elif event_type == 'exploitation_success':
+                self.on_exploitation_success(data)
+            elif event_type == 'progress_update':
+                self.on_progress_update(data)
+        except Exception as e:
+            self.logger.error(f"Ошибка обработки события: {e}")
     
     def on_profile_change(self):
         """Обработчик смены профиля"""
         profile = dpg.get_value("scan_profile")
-        if self.config_manager.set_profile(profile):
-            config = self.config_manager.get_active_config()
-            
-            # Применяем настройки к движку
-            self.engine.rate_limit = config.get("rate_limit", 10)
-            self.engine.max_depth = config.get("max_depth", 5)
-            self.engine.max_concurrent_tasks = config.get("max_concurrent_tasks", 5)
-            
+        if self.engine.set_scan_profile(profile):
             # Обновляем UI элементы
-            dpg.set_value("rate_limit", config.get("rate_limit", 10))
-            dpg.set_value("max_depth", config.get("max_depth", 5))
+            profile_info = self.engine.get_current_profile_info()
+            dpg.set_value("rate_limit", profile_info.get('rate_limit', 10))
+            dpg.set_value("max_depth", profile_info.get('max_depth', 5))
             
             self.update_profile_description()
             self.add_to_log(f"📋 Установлен профиль: {profile}")
@@ -498,27 +435,20 @@ class MainWindow:
     def update_profile_description(self):
         """Обновление описания профиля"""
         profile = dpg.get_value("scan_profile")
-        description = self.config_manager.get_profile_description(profile)
+        profile_info = self.engine.get_current_profile_info()
+        description = profile_info.get('description', 'Нет описания')
         dpg.set_value("profile_description", f" - {description}")
     
     def save_config(self):
         """Сохранить текущую конфигурацию"""
-        # Собираем текущие настройки
-        current_config = {
-            "rate_limit": dpg.get_value("rate_limit"),
-            "max_depth": dpg.get_value("max_depth"),
-            "max_concurrent_tasks": self.engine.max_concurrent_tasks
-        }
-        
-        # Обновляем активный профиль
-        profile = dpg.get_value("scan_profile")
-        self.config_manager.update_profile(profile, current_config)
-        
-        # Сохраняем в файл
-        if self.config_manager.save_profiles():
-            self.add_to_log("💾 Конфигурация сохранена")
-        else:
-            self.add_to_log("❌ Ошибка сохранения конфигурации")
+        try:
+            # Сохраняем все конфиги через основной config_manager
+            self.engine.config_manager.save_config()
+            self.engine.config_manager.save_profiles()
+            self.engine.config_manager.save_module_configs()
+            self.add_to_log("💾 Все конфигурации сохранены")
+        except Exception as e:
+            self.add_to_log(f"❌ Ошибка сохранения конфигурации: {e}")
     
     def start_scan(self):
         """Запуск сканирования"""
@@ -533,31 +463,9 @@ class MainWindow:
         # Добавление цели в движок
         self.engine.add_initial_target(target)
         
-        # Запуск асинхронного сканирования в отдельном потоке
-        scan_thread = threading.Thread(target=self.run_scan_async)
-        scan_thread.daemon = True
-        scan_thread.start()
-        
         self.add_to_log(f"🚀 Начато сканирование: {target}")
         self.add_to_log(f"📋 Профиль: {dpg.get_value('scan_profile')}")
         dpg.set_value("current_status", "Сканирование...")
-    
-    def run_scan_async(self):
-        """Запуск асинхронного сканирования"""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(self.engine.process_queue())
-            # Обновляем граф после завершения сканирования
-            self.update_graph_from_engine()
-        except Exception as e:
-            self.add_to_log(f"❌ Ошибка сканирования: {e}")
-        finally:
-            loop.close()
-            self.is_scanning = False
-            self.update_ui_state()
-            dpg.set_value("current_status", "Завершено")
-            self.add_to_log("✅ Сканирование завершено")
     
     def stop_scan(self):
         """Остановка сканирования"""
@@ -592,6 +500,32 @@ class MainWindow:
         self.add_to_log(message)
         self.update_statistics()
     
+    def on_task_failed(self, data):
+        """Callback при ошибке задачи"""
+        task = data.get('task')
+        error = data.get('error')
+        message = f"❌ Ошибка: {task.data if task else 'Unknown'} - {error}"
+        self.add_to_log(message)
+    
+    def on_vulnerability_found(self, data):
+        """Callback при обнаружении уязвимости"""
+        message = f"🔴 Уязвимость: {data.get('cve', 'Unknown')} на {data.get('target', 'Unknown')}"
+        self.add_to_log(message)
+    
+    def on_exploitation_success(self, data):
+        """Callback при успешной эксплуатации"""
+        message = f"💥 УСПЕШНАЯ ЭКСПЛУАТАЦИЯ: {data.get('access_type', 'Unknown')} доступ к {data.get('target', 'Unknown')}"
+        self.add_to_log(message)
+    
+    def on_scan_started(self, data):
+        """Callback при начале сканирования"""
+        self.add_to_log("🚀 Начато сканирование...")
+    
+    def on_progress_update(self, data):
+        """Callback при обновлении прогресса"""
+        # Можно добавить обновление прогресс-бара
+        pass
+    
     def add_to_log(self, message: str):
         """Добавить сообщение в лог"""
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -616,7 +550,10 @@ class MainWindow:
                 'data': node.data,
                 'depth': node.depth,
                 'module': node.module,
-                'ports': node.ports
+                'ports': node.ports,
+                'metadata': node.metadata,
+                'vulnerability_data': node.vulnerability_data,
+                'exploit_data': node.exploit_data
             })
             node_map[node.node_id] = node_id
         
@@ -641,10 +578,16 @@ class MainWindow:
             results_text += f"{depth_indent}• {node_type}: {node.data}\n"
             
             if node.ports:
-                results_text += f"{depth_indent}  Порта: {node.ports}\n"
+                results_text += f"{depth_indent}  Порты: {node.ports}\n"
             
-            if hasattr(node, 'metadata') and node.metadata:
+            if node.metadata:
                 results_text += f"{depth_indent}  Метаданные: {node.metadata}\n"
+            
+            if node.vulnerability_data:
+                results_text += f"{depth_indent}  Уязвимость: {node.vulnerability_data}\n"
+            
+            if node.exploit_data:
+                results_text += f"{depth_indent}  Эксплуатация: {node.exploit_data}\n"
         
         dpg.set_value("detailed_results", results_text)
     
@@ -652,53 +595,24 @@ class MainWindow:
         """Обновление статистики"""
         stats = self.engine.get_statistics()
         dpg.set_value("stats_targets", f"Целей: {stats.get('total_scans', 0)}")
-        dpg.set_value("stats_nodes", f"Найдено узлов: {stats.get('nodes_discovered', 0)}")
+        dpg.set_value("stats_nodes", f"Найдено узлов: {stats.get('discovered_nodes', 0)}")
         dpg.set_value("stats_scans", f"Завершено сканирований: {stats.get('successful_scans', 0)}")
         dpg.set_value("stats_modules", f"Активных модулей: {stats.get('active_modules', 0)}")
     
     def refresh_modules_list(self):
         """Обновление списка модулей"""
-        modules = self.module_manager.list_modules()
-        module_names = list(modules.keys())
+        module_names = list(self.engine.active_modules.keys())
         dpg.configure_item("modules_list", items=module_names)
         self.add_to_log("📋 Список модулей обновлен")
     
     def on_module_select(self, sender, app_data):
         """Обработка выбора модуля"""
         selected_module = app_data
-        module_info = self.module_manager.get_module_info(selected_module)
-        
-        if module_info:
-            info_text = f"""
-Название: {module_info.name}
-Версия: {module_info.version}
-Автор: {module_info.author}
-Тип: {module_info.module_type.value}
-Описание: {module_info.description}
-
-Входные данные: {', '.join(module_info.input_types)}
-Выходные данные: {', '.join(module_info.output_types)}
-Триггеры: {', '.join(module_info.triggers)}
-Статус: {'✅ Включен' if module_info.enabled else '❌ Выключен'}
-"""
-            dpg.set_value("module_info_content", info_text)
-    
-    def load_selected_module(self):
-        """Загрузка выбранного модуля"""
-        selected_module = dpg.get_value("modules_list")
-        if selected_module:
-            success = self.module_manager.load_module(selected_module)
-            if success:
-                self.add_to_log(f"✅ Модуль загружен: {selected_module}")
-            else:
-                self.add_to_log(f"❌ Ошибка загрузки модуля: {selected_module}")
-    
-    def unload_selected_module(self):
-        """Выгрузка выбранного модуля"""
-        selected_module = dpg.get_value("modules_list")
-        if selected_module:
-            # Здесь будет логика выгрузки модулей
-            self.add_to_log(f"⚠️ Выгрузка модуля {selected_module} пока не реализована")
+        module_info = f"""
+Модуль: {selected_module}
+Статус: ✅ Загружен
+        """
+        dpg.set_value("module_info_content", module_info)
     
     def export_results(self):
         """Экспорт результатов"""
@@ -750,7 +664,7 @@ RapidRecon v1.0.0
     
     def quick_scan(self):
         """Быстрое сканирование"""
-        dpg.set_value("scan_profile", "normal")
+        dpg.set_value("scan_profile", "stealth")
         self.on_profile_change()
         dpg.set_value("max_depth", 2)
         self.add_to_log("🚀 Настроено быстрое сканирование")
@@ -772,6 +686,10 @@ RapidRecon v1.0.0
             self.stop_scan()
         self.destroy()
     
+    def run(self):
+        """Запуск GUI (альтернатива show для совместимости)"""
+        self.show()
+    
     def show(self):
         """Показать окно"""
         dpg.create_viewport(
@@ -788,6 +706,7 @@ RapidRecon v1.0.0
         # Инициализация данных
         self.refresh_modules_list()
         self.update_ui_state()
+        self.update_profile_description()
         
         dpg.start_dearpygui()
     
