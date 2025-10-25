@@ -94,9 +94,9 @@ class MainWindow:
         self.monitor_thread = None
         self.monitor_running = False
         
-        # Флаги инициализации GUI элементов
+        # GUI элементы
         self.gui_initialized = False
-        self.stat_items = {}  # Словарь для хранения элементов статистики
+        self.gui_elements = {}  # Словарь для хранения всех GUI элементов
         
         # Инициализация GUI
         self.initialize_gui()
@@ -160,7 +160,7 @@ class MainWindow:
                 # Обновляем данные из движка
                 self.update_engine_data()
                 
-                # Обновляем статистику в GUI потоке
+                # Обновляем статистику
                 current_time = time.time()
                 if current_time - self.last_stats_update >= self.stats_update_interval:
                     self.update_statistics()
@@ -202,7 +202,7 @@ class MainWindow:
             # Статус
             with dpg.group(horizontal=True):
                 dpg.add_text("Status:")
-                self.stat_items['scan_status'] = dpg.add_text("Ready", color=[72, 199, 116])
+                self.gui_elements['scan_status'] = dpg.add_text("Ready", tag="scan_status", color=[72, 199, 116])
             
             # Controls Panel
             self.controls_panel.create_controls_panel("sidebar")
@@ -211,21 +211,25 @@ class MainWindow:
             with dpg.collapsing_header(label="Navigation", default_open=True):
                 dpg.add_button(
                     label="Dashboard", 
+                    tag="btn_dashboard",
                     width=-1,
                     callback=lambda: self.switch_tab("dashboard")
                 )
                 dpg.add_button(
                     label="Network Tree",
+                    tag="btn_network_tree",
                     width=-1, 
                     callback=lambda: self.switch_tab("network_tree")
                 )
                 dpg.add_button(
                     label="Hosts Table",
+                    tag="btn_hosts_table",
                     width=-1,
                     callback=lambda: self.switch_tab("hosts_table")
                 )
                 dpg.add_button(
                     label="Scope Manager", 
+                    tag="btn_scope_manager",
                     width=-1,
                     callback=lambda: self.switch_tab("scope_manager")
                 )
@@ -233,18 +237,19 @@ class MainWindow:
             # Статистика
             with dpg.collapsing_header(label="Statistics", default_open=True):
                 dpg.add_text("Network Discovery:")
-                self.stat_items['stat_nodes'] = dpg.add_text("Nodes: 0")
-                self.stat_items['stat_hosts'] = dpg.add_text("Hosts: 0")
-                self.stat_items['stat_services'] = dpg.add_text("Services: 0")
-                self.stat_items['stat_ports'] = dpg.add_text("Ports: 0")
+                self.gui_elements['stat_nodes'] = dpg.add_text("Nodes: 0", tag="stat_nodes")
+                self.gui_elements['stat_hosts'] = dpg.add_text("Hosts: 0", tag="stat_hosts")
+                self.gui_elements['stat_services'] = dpg.add_text("Services: 0", tag="stat_services")
+                self.gui_elements['stat_ports'] = dpg.add_text("Ports: 0", tag="stat_ports")
                 
                 dpg.add_text("Security Findings:")
-                self.stat_items['stat_vulns'] = dpg.add_text("Vulnerabilities: 0", color=[150, 150, 160])
-                self.stat_items['stat_exploits'] = dpg.add_text("Exploits: 0", color=[150, 150, 160])
+                self.gui_elements['stat_vulns'] = dpg.add_text("Vulnerabilities: 0", tag="stat_vulns", color=[150, 150, 160])
+                self.gui_elements['stat_exploits'] = dpg.add_text("Exploits: 0", tag="stat_exploits", color=[150, 150, 160])
     
     def switch_tab(self, tab_name: str):
         """Переключение между вкладками"""
         self.current_tab = tab_name
+        self.logger.info(f"Switching to tab: {tab_name}")
         
         # Очищаем область контента
         if dpg.does_item_exist("content_area"):
@@ -273,14 +278,14 @@ class MainWindow:
                     dpg.add_separator()
                     
                     dpg.add_text("Enter target:")
-                    dpg.add_input_text(
+                    self.gui_elements['dashboard_target'] = dpg.add_input_text(
                         tag="dashboard_target",
                         hint="IP, domain or range",
                         width=-1
                     )
                     
                     dpg.add_text("Scan intensity:")
-                    dpg.add_combo(
+                    self.gui_elements['dashboard_intensity'] = dpg.add_combo(
                         tag="dashboard_intensity",
                         items=["Stealth", "Normal", "Aggressive", "Full"],
                         default_value="Normal",
@@ -290,16 +295,19 @@ class MainWindow:
                     with dpg.group(horizontal=True):
                         dpg.add_button(
                             label="Start Scan",
+                            tag="btn_start_scan",
                             callback=self.quick_start_scan
                         )
                         dpg.add_button(
                             label="Add Target",
+                            tag="btn_add_target",
                             callback=self.add_target_from_dashboard
                         )
                     
                     # Кнопка для принудительного запуска движка
                     dpg.add_button(
                         label="DEBUG: Force Engine",
+                        tag="btn_force_engine",
                         callback=self.force_engine_start,
                         width=-1
                     )
@@ -311,12 +319,12 @@ class MainWindow:
                     dpg.add_text("Engine: Running", color=[72, 199, 116])
                     dpg.add_text("Modules: 6/6 Ready", color=[72, 199, 116])
                     dpg.add_text("Last Scan: Never", color=[255, 179, 64])
-                    self.stat_items['stat_active_scans'] = dpg.add_text("Active Scans: 0", color=[150, 150, 160])
+                    self.gui_elements['stat_active_scans'] = dpg.add_text("Active Scans: 0", tag="stat_active_scans", color=[150, 150, 160])
             
             # Activity Log
             dpg.add_spacer(height=10)
             dpg.add_text("Activity Log")
-            self.stat_items['activity_log'] = dpg.add_input_text(
+            self.gui_elements['activity_log'] = dpg.add_input_text(
                 tag="activity_log",
                 multiline=True,
                 height=200,
@@ -333,9 +341,9 @@ class MainWindow:
             
             # Controls
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Refresh", callback=self.refresh_network_tree)
-                dpg.add_button(label="Statistics", callback=self.show_network_statistics)
-                dpg.add_button(label="Export", callback=self.export_network_tree)
+                dpg.add_button(label="Refresh", tag="btn_refresh_tree", callback=self.refresh_network_tree)
+                dpg.add_button(label="Statistics", tag="btn_tree_stats", callback=self.show_network_statistics)
+                dpg.add_button(label="Export", tag="btn_export_tree", callback=self.export_network_tree)
             
             # Tree
             self.network_tree.create_tree_panel("content_area")
@@ -358,59 +366,72 @@ class MainWindow:
             dpg.add_separator()
             dpg.add_text("Scope management interface")
             dpg.add_text("Add targets to scope for focused scanning")
-            dpg.add_button(label="Import Scope", width=120)
-            dpg.add_button(label="Export Scope", width=120)
+            dpg.add_button(label="Import Scope", tag="btn_import_scope", width=120)
+            dpg.add_button(label="Export Scope", tag="btn_export_scope", width=120)
     
     def quick_start_scan(self):
         """Быстрый запуск сканирования"""
-        target = dpg.get_value("dashboard_target")
-        if not target:
-            self.update_activity_log("ERROR: Please enter a target first!")
-            return
-        
-        intensity = dpg.get_value("dashboard_intensity")
-        self.update_activity_log(f"🚀 Starting {intensity} scan for: {target}")
-        self.logger.info(f"🚀 QUICK START SCAN: target={target}, intensity={intensity}")
-        
-        # Устанавливаем профиль сканирования
-        profile_map = {
-            "Stealth": "stealth",
-            "Normal": "normal", 
-            "Aggressive": "aggressive",
-            "Full": "aggressive"
-        }
-        profile_name = profile_map.get(intensity, "normal")
-        
-        if hasattr(self.engine, 'set_scan_profile'):
-            self.engine.set_scan_profile(profile_name)
-            self.update_activity_log(f"📊 Scan profile set to: {profile_name}")
-        
-        # Добавляем цель в движок
-        if hasattr(self.engine, 'add_initial_target'):
-            self.logger.info("✅ Adding target to engine via add_initial_target")
-            try:
-                self.engine.add_initial_target(target)
-                self.update_activity_log(f"🎯 Target {target} added to engine queue")
-                
-                # Проверяем состояние очереди
-                if hasattr(self.engine, 'pending_scans'):
-                    queue_size = self.engine.pending_scans.qsize()
-                    self.update_activity_log(f"📋 Scan queue size: {queue_size}")
-                    self.logger.info(f"Queue size after adding target: {queue_size}")
-                
-            except Exception as e:
-                self.logger.error(f"❌ Error in add_initial_target: {e}")
-                self.update_activity_log(f"ERROR adding target: {e}")
-        else:
-            self.logger.error("❌ Engine has no add_initial_target method!")
-            self.update_activity_log("ERROR: Engine not properly initialized")
-        
-        # Обновляем состояние сканирования
-        self.is_scanning = True
-        self.update_scan_state()
-        
-        # Запускаем движок если он не запущен
-        self.start_engine_if_needed()
+        try:
+            target = dpg.get_value("dashboard_target")
+            if not target:
+                self.update_activity_log("ERROR: Please enter a target first!")
+                return
+            
+            intensity = dpg.get_value("dashboard_intensity")
+            self.update_activity_log(f"🚀 Starting {intensity} scan for: {target}")
+            self.logger.info(f"🚀 QUICK START SCAN: target={target}, intensity={intensity}")
+            
+            # Устанавливаем профиль сканирования
+            profile_map = {
+                "Stealth": "stealth",
+                "Normal": "normal", 
+                "Aggressive": "aggressive",
+                "Full": "aggressive"
+            }
+            profile_name = profile_map.get(intensity, "normal")
+            
+            if hasattr(self.engine, 'set_scan_profile'):
+                success = self.engine.set_scan_profile(profile_name)
+                if success:
+                    self.update_activity_log(f"📊 Scan profile set to: {profile_name}")
+                else:
+                    self.update_activity_log(f"❌ Failed to set profile: {profile_name}")
+            
+            # Добавляем цель в движок
+            if hasattr(self.engine, 'add_initial_target'):
+                self.logger.info("✅ Adding target to engine via add_initial_target")
+                try:
+                    self.engine.add_initial_target(target)
+                    self.update_activity_log(f"🎯 Target {target} added to engine queue")
+                    
+                    # Проверяем состояние очереди
+                    if hasattr(self.engine, 'pending_scans'):
+                        queue_size = self.engine.pending_scans.qsize()
+                        self.update_activity_log(f"📋 Scan queue size: {queue_size}")
+                        self.logger.info(f"Queue size after adding target: {queue_size}")
+                    
+                    # Проверяем обнаруженные узлы
+                    if hasattr(self.engine, 'discovered_nodes'):
+                        nodes_count = len(self.engine.discovered_nodes)
+                        self.logger.info(f"Discovered nodes after adding target: {nodes_count}")
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Error in add_initial_target: {e}")
+                    self.update_activity_log(f"ERROR adding target: {e}")
+            else:
+                self.logger.error("❌ Engine has no add_initial_target method!")
+                self.update_activity_log("ERROR: Engine not properly initialized")
+            
+            # Обновляем состояние сканирования
+            self.is_scanning = True
+            self.update_scan_state()
+            
+            # Запускаем движок если он не запущен
+            self.start_engine_if_needed()
+            
+        except Exception as e:
+            self.logger.error(f"Error in quick_start_scan: {e}")
+            self.update_activity_log(f"ERROR: {e}")
     
     def start_engine_if_needed(self):
         """Запуск движка если он не запущен"""
@@ -502,24 +523,21 @@ class MainWindow:
         """Обновление состояния сканирования"""
         try:
             if self.is_scanning:
-                if 'scan_status' in self.stat_items and dpg.does_item_exist(self.stat_items['scan_status']):
-                    dpg.set_value(self.stat_items['scan_status'], "Scanning")
-                    dpg.configure_item(self.stat_items['scan_status'], color=[255, 179, 64])  # warning color
+                dpg.set_value("scan_status", "Scanning")
+                dpg.configure_item("scan_status", color=[255, 179, 64])  # warning color
             else:
-                if 'scan_status' in self.stat_items and dpg.does_item_exist(self.stat_items['scan_status']):
-                    dpg.set_value(self.stat_items['scan_status'], "Ready")
-                    dpg.configure_item(self.stat_items['scan_status'], color=[72, 199, 116])  # success color
+                dpg.set_value("scan_status", "Ready")
+                dpg.configure_item("scan_status", color=[72, 199, 116])  # success color
         except Exception as e:
             self.logger.error(f"Error updating scan state: {e}")
     
     def update_activity_log(self, message: str):
         """Обновление лога активности"""
         try:
-            if 'activity_log' in self.stat_items and dpg.does_item_exist(self.stat_items['activity_log']):
-                current_log = dpg.get_value(self.stat_items['activity_log'])
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                new_log = f"[{timestamp}] {message}\n{current_log}"
-                dpg.set_value(self.stat_items['activity_log'], new_log)
+            current_log = dpg.get_value("activity_log")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            new_log = f"[{timestamp}] {message}\n{current_log}"
+            dpg.set_value("activity_log", new_log)
         except Exception as e:
             self.logger.error(f"Error updating activity log: {e}")
     
@@ -681,27 +699,14 @@ class MainWindow:
             total_exploits = engine_stats.get('exploits_successful', 0)
             pending_tasks = engine_stats.get('pending_tasks', 0)
             
-            # Обновляем UI только если элементы существуют
-            if 'stat_nodes' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_nodes']):
-                dpg.set_value(self.stat_items['stat_nodes'], f"Nodes: {total_nodes}")
-            
-            if 'stat_hosts' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_hosts']):
-                dpg.set_value(self.stat_items['stat_hosts'], f"Hosts: {total_hosts}")
-            
-            if 'stat_services' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_services']):
-                dpg.set_value(self.stat_items['stat_services'], f"Services: {total_services}")
-            
-            if 'stat_ports' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_ports']):
-                dpg.set_value(self.stat_items['stat_ports'], f"Ports: {total_ports}")
-            
-            if 'stat_vulns' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_vulns']):
-                dpg.set_value(self.stat_items['stat_vulns'], f"Vulnerabilities: {total_vulns}")
-            
-            if 'stat_exploits' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_exploits']):
-                dpg.set_value(self.stat_items['stat_exploits'], f"Exploits: {total_exploits}")
-            
-            if 'stat_active_scans' in self.stat_items and dpg.does_item_exist(self.stat_items['stat_active_scans']):
-                dpg.set_value(self.stat_items['stat_active_scans'], f"Active Scans: {pending_tasks}")
+            # Обновляем UI
+            dpg.set_value("stat_nodes", f"Nodes: {total_nodes}")
+            dpg.set_value("stat_hosts", f"Hosts: {total_hosts}")
+            dpg.set_value("stat_services", f"Services: {total_services}")
+            dpg.set_value("stat_ports", f"Ports: {total_ports}")
+            dpg.set_value("stat_vulns", f"Vulnerabilities: {total_vulns}")
+            dpg.set_value("stat_exploits", f"Exploits: {total_exploits}")
+            dpg.set_value("stat_active_scans", f"Active Scans: {pending_tasks}")
             
         except Exception as e:
             self.logger.error(f"Error updating statistics: {e}")
