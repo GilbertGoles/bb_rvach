@@ -160,10 +160,7 @@ class RapidRecon:
                 module_class = self.load_builtin_module(module_name)
                 if module_class:
                     # Передаем config_manager в модули, если они его поддерживают
-                    if hasattr(module_class, '__init__') and 'config_manager' in module_class.__init__.__code__.co_varnames:
-                        module_instance = module_class(self.engine.rate_limit, config_manager=self.config_manager)
-                    else:
-                        module_instance = module_class(self.engine.rate_limit)
+                    module_instance = self.create_module_instance(module_class, module_name)
                     
                     self.engine.register_module(module_name, module_instance)
                     registered_count += 1
@@ -174,6 +171,37 @@ class RapidRecon:
                 self.logger.error(f"❌ Ошибка регистрации модуля {module_name}: {e}")
         
         self.logger.info(f"📋 Зарегистрировано встроенных модулей: {registered_count}")
+    
+    def create_module_instance(self, module_class: Type, module_name: str) -> Any:
+        """
+        Создание экземпляра модуля с правильными параметрами
+        
+        Args:
+            module_class: Класс модуля
+            module_name: Имя модуля для конфигурации
+            
+        Returns:
+            Экземпляр модуля
+        """
+        # Получаем конфигурацию модуля
+        module_config = self.config_manager.get_module_config(module_name)
+        rate_limit = module_config.get('rate_limit', self.engine.rate_limit)
+        
+        # Определяем параметры конструктора
+        init_params = module_class.__init__.__code__.co_varnames
+        
+        if 'config_manager' in init_params and 'module_config' in init_params:
+            # Модуль поддерживает оба параметра
+            return module_class(rate_limit, config_manager=self.config_manager, module_config=module_config)
+        elif 'config_manager' in init_params:
+            # Модуль поддерживает только config_manager
+            return module_class(rate_limit, config_manager=self.config_manager)
+        elif 'module_config' in init_params:
+            # Модуль поддерживает только module_config
+            return module_class(rate_limit, module_config=module_config)
+        else:
+            # Базовый конструктор
+            return module_class(rate_limit)
     
     def load_builtin_module(self, module_name: str) -> Optional[Type]:
         """
@@ -189,7 +217,8 @@ class RapidRecon:
             "ping_scanner": "modules.ping_scanner.module.PingScanner",
             "port_scanner": "modules.port_scanner.module.PortScanner",
             "service_detector": "modules.service_detector.module.ServiceDetector",
-            "subdomain_scanner": "modules.subdomain_scanner.module.SubdomainScanner"
+            "subdomain_scanner": "modules.subdomain_scanner.module.SubdomainScanner",
+            "vulnerability_scanner": "modules.vulnerability_scanner.module.VulnerabilityScanner"
         }
         
         if module_name not in module_paths:
@@ -262,8 +291,19 @@ class RapidRecon:
                 if self.gui:
                     self.gui.on_module_results(data)
             
+            # Специальная обработка для уязвимостей
+            elif event_type == 'vulnerability_found':
+                if self.gui:
+                    self.gui.on_vulnerability_found(data)
+                # Логируем критичные уязвимости
+                if data and data.get('severity') in ['critical', 'high']:
+                    self.logger.warning(
+                        f"🔴 Критичная уязвимость: {data.get('cve', 'Unknown')} "
+                        f"на {data.get('target', 'Unknown')}"
+                    )
+            
             # Логируем важные события
-            if event_type in ['node_discovered', 'task_failed', 'scan_completed']:
+            if event_type in ['node_discovered', 'task_failed', 'scan_completed', 'vulnerability_found']:
                 self.logger.debug(f"Engine event: {event_type} - {data}")
                 
         except Exception as e:
@@ -328,6 +368,12 @@ class RapidRecon:
             builtin_modules = self.config['modules'].get('builtin_modules', [])
             self.logger.info(f"📦 Встроенные модули: {', '.join(builtin_modules)}")
             
+            # Информация о конфигурации модулей
+            for module_name in builtin_modules:
+                module_config = self.config_manager.get_module_config(module_name)
+                if module_config:
+                    self.logger.debug(f"⚙️ Конфигурация {module_name}: {module_config}")
+            
             # Запуск асинхронного движка в отдельном потоке
             self.engine_thread = threading.Thread(
                 target=self.start_engine_async,
@@ -391,11 +437,20 @@ class RapidRecon:
                 self.gui.config_manager.save_profiles()
                 self.logger.info("✅ Профили сканирования сохранены")
             
+            # Сохранение конфигурации модулей
+            self.config_manager.save_module_configs()
+            self.logger.info("✅ Конфигурации модулей сохранены")
+            
             # Экспорт результатов если есть
             if self.engine and self.engine.discovered_nodes:
                 results_file = f"rapidrecon_results_{int(time.time())}.json"
                 self.engine.export_results(results_file)
                 self.logger.info(f"💾 Результаты экспортированы в: {results_file}")
+            
+            # Отчет о найденных уязвимостях
+            if hasattr(self.engine, 'stats') and self.engine.stats.get('vulnerabilities_found', 0) > 0:
+                vuln_count = self.engine.stats['vulnerabilities_found']
+                self.logger.warning(f"🔴 Обнаружено уязвимостей: {vuln_count}")
             
             self.logger.info("🎉 RapidRecon завершил работу")
             
@@ -434,7 +489,8 @@ class RapidRecon:
             'threads_active': threading.active_count(),
             'uptime': getattr(self, 'start_time', 0),
             'last_update': self.last_update_time,
-            'active_profile': getattr(self.config_manager, 'active_profile', 'normal')
+            'active_profile': getattr(self.config_manager, 'active_profile', 'normal'),
+            'vulnerabilities_found': engine_stats.get('vulnerabilities_found', 0)
         }
     
     def add_scan_target(self, target: str):
@@ -475,6 +531,39 @@ class RapidRecon:
             self.engine.max_concurrent_tasks = engine_config.get('max_concurrent_tasks', 5)
         
         self.update_interval = self.config['app'].get('update_interval', 0.5)
+    
+    def get_vulnerability_report(self) -> Dict[str, Any]:
+        """
+        Получить отчет об обнаруженных уязвимостях
+        
+        Returns:
+            Dict с информацией об уязвимостях
+        """
+        if not self.engine:
+            return {}
+        
+        vulnerabilities = []
+        for node in self.engine.discovered_nodes:
+            if hasattr(node, 'type') and node.type.value == 'vulnerability':
+                vulnerabilities.append({
+                    'target': node.data,
+                    'severity': node.metadata.get('severity', 'unknown'),
+                    'cve': node.vulnerability_data.get('cve', 'Unknown'),
+                    'description': node.vulnerability_data.get('description', ''),
+                    'cvss_score': node.vulnerability_data.get('cvss_score', 0.0),
+                    'source': node.source
+                })
+        
+        return {
+            'total_vulnerabilities': len(vulnerabilities),
+            'vulnerabilities': vulnerabilities,
+            'summary': {
+                'critical': len([v for v in vulnerabilities if v['severity'] == 'critical']),
+                'high': len([v for v in vulnerabilities if v['severity'] == 'high']),
+                'medium': len([v for v in vulnerabilities if v['severity'] == 'medium']),
+                'low': len([v for v in vulnerabilities if v['severity'] == 'low'])
+            }
+        }
 
 
 def main():
