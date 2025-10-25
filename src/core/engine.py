@@ -12,6 +12,8 @@ from enum import Enum
 import random
 import ipaddress
 
+from .config import ConfigManager  # ← ДОБАВЛЕН импорт ConfigManager
+
 class NodeType(Enum):
     """Типы обнаруживаемых узлов"""
     INITIAL_TARGET = "initial_target"
@@ -62,17 +64,27 @@ class ScanNode:
 class PropagationEngine:
     """Движок авто-распространения сканирования с поддержкой эксплуатации"""
     
-    def __init__(self, max_depth: int = 10, max_concurrent_tasks: int = 5, rate_limit: int = 10, update_callback: Optional[Callable] = None):
+    def __init__(self, update_callback: Optional[Callable] = None):
+        # Инициализация ConfigManager внутри движка
+        self.config_manager = ConfigManager()
+        
+        # Получаем настройки из конфига
+        engine_config = self.config_manager.get_engine_config()
+        app_config = self.config_manager.get_app_config()
+        
+        # Используем настройки из конфига вместо хардкода
+        self.max_depth = engine_config.get('max_depth', 10)
+        self.max_concurrent_tasks = engine_config.get('max_concurrent_tasks', 5)
+        self.rate_limit = engine_config.get('rate_limit', 10)
+        
+        # Инициализация остальных атрибутов
         self.discovered_nodes: List[ScanNode] = []
         self.pending_scans = Queue()
         self.completed_scans: Dict[str, Dict] = {}
         self.active_modules: Dict[str, Any] = {}
         self.scan_depth = 0
-        self.max_depth = max_depth
-        self.max_concurrent_tasks = max_concurrent_tasks
-        self.rate_limit = rate_limit
         self.is_running = False
-        self.update_callback = update_callback  # Callback для обновления GUI
+        self.update_callback = update_callback
         
         self.stats = {
             'total_scans': 0,
@@ -86,12 +98,77 @@ class PropagationEngine:
             'lateral_movements': 0
         }
         
-        # Настройка логирования
+        # Настройка логирования с использованием конфига
+        logging_config = self.config_manager.get_app_config()
+        debug_mode = logging_config.get('debug', True)
+        
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.DEBUG if debug_mode else logging.INFO,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
         self.logger = logging.getLogger('RapidRecon')
+        
+        self.logger.info(f"PropagationEngine инициализирован с настройками из конфига")
+        self.logger.info(f"Глубина: {self.max_depth}, Потоки: {self.max_concurrent_tasks}, Лимит: {self.rate_limit}/сек")
+    
+    def set_scan_profile(self, profile_name: str) -> bool:
+        """Установить профиль сканирования"""
+        success = self.config_manager.set_profile(profile_name)
+        if success:
+            # Обновляем настройки из нового профиля
+            profile_config = self.config_manager.get_active_config()
+            self.rate_limit = profile_config.get('rate_limit', self.rate_limit)
+            self.max_depth = profile_config.get('max_depth', self.max_depth)
+            
+            # Обновляем настройки модулей
+            for module_name, module in self.active_modules.items():
+                if hasattr(module, 'update_config'):
+                    module_config = self.config_manager.get_module_config(module_name)
+                    module.update_config(module_config)
+            
+            self.logger.info(f"Профиль сканирования изменен на: {profile_name}")
+            self._notify_gui_update('profile_changed', profile_name)
+        
+        return success
+    
+    def get_available_profiles(self) -> List[str]:
+        """Получить список доступных профилей"""
+        return self.config_manager.get_available_profiles()
+    
+    def get_current_profile_info(self) -> Dict[str, Any]:
+        """Получить информацию о текущем профиле"""
+        profile_name = self.config_manager.active_profile
+        profile_config = self.config_manager.get_active_config()
+        
+        return {
+            'name': profile_name,
+            'rate_limit': profile_config.get('rate_limit'),
+            'max_depth': profile_config.get('max_depth'),
+            'modules': profile_config.get('modules', []),
+            'description': profile_config.get('description', 'Нет описания')
+        }
+    
+    def reload_config(self) -> bool:
+        """Перезагрузить конфигурацию из файлов"""
+        try:
+            # Перезагружаем все конфиги
+            self.config_manager.load_config()
+            self.config_manager.load_profiles()
+            self.config_manager.load_modules_config()
+            
+            # Обновляем настройки движка
+            engine_config = self.config_manager.get_engine_config()
+            self.max_depth = engine_config.get('max_depth', self.max_depth)
+            self.max_concurrent_tasks = engine_config.get('max_concurrent_tasks', self.max_concurrent_tasks)
+            self.rate_limit = engine_config.get('rate_limit', self.rate_limit)
+            
+            self.logger.info("Конфигурация перезагружена из файлов")
+            self._notify_gui_update('config_reloaded')
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка перезагрузки конфигурации: {e}")
+            return False
     
     def add_initial_target(self, target: str):
         """Добавить начальную цель для сканирования"""
@@ -184,7 +261,19 @@ class PropagationEngine:
     
     def register_module(self, module_name: str, module_class):
         """Регистрация модуля в системе"""
-        self.active_modules[module_name] = module_class(self.rate_limit)
+        # Получаем конфигурацию модуля перед регистрацией
+        module_config = self.config_manager.get_module_config(module_name)
+        
+        # Передаем конфигурацию модулю при создании
+        if hasattr(module_class, '__init__'):
+            # Проверяем, принимает ли модуль конфиг в конструкторе
+            module_instance = module_class(module_config)
+        else:
+            module_instance = module_class()
+            if hasattr(module_instance, 'update_config'):
+                module_instance.update_config(module_config)
+        
+        self.active_modules[module_name] = module_instance
         self.logger.info(f"Модуль зарегистрирован: {module_name}")
         
         # Уведомляем GUI о новом модуле
@@ -256,14 +345,18 @@ class PropagationEngine:
         self._notify_gui_update('task_started', task)
         
         try:
+            # Получаем таймаут из конфига модуля
+            module_config = self.config_manager.get_module_config(task.module)
+            timeout = module_config.get('timeout', 30.0)
+            
             # Логика выбора и выполнения модуля
             module = self.select_module_for_task(task)
             
             if module:
-                # Выполнение модуля с таймаутом
+                # Выполнение модуля с таймаутом из конфига
                 await asyncio.wait_for(
                     self.run_module(module, task),
-                    timeout=30.0
+                    timeout=timeout
                 )
                 self.stats['modules_executed'] += 1
             else:
@@ -796,7 +889,8 @@ class PropagationEngine:
             'active_modules': len(self.active_modules),
             'is_running': self.is_running,
             'rate_limit': self.rate_limit,
-            'max_depth': self.max_depth
+            'max_depth': self.max_depth,
+            'current_profile': self.get_current_profile_info()
         }
     
     def export_results(self, filename: str):
@@ -847,12 +941,11 @@ def gui_update_callback(event_type: str, data: Any = None):
 # Пример использования
 async def main():
     """Демонстрация работы движка с поддержкой эксплуатации"""
-    engine = PropagationEngine(
-        max_depth=4, 
-        max_concurrent_tasks=3, 
-        rate_limit=10,
-        update_callback=gui_update_callback
-    )
+    # Теперь создаем движок БЕЗ параметров конфигурации
+    engine = PropagationEngine(update_callback=gui_update_callback)
+    
+    # Можем изменить профиль сканирования
+    engine.set_scan_profile("aggressive")
     
     # Добавляем начальные цели разных типов
     engine.add_initial_target("example.com")  # Домен
@@ -864,3 +957,6 @@ async def main():
     # Выводим статистику
     stats = engine.get_statistics()
     print(f"Статистика: {stats}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
