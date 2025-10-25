@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from core.engine import PropagationEngine
 from core.module_manager import ModuleManager
+from core.config_manager import ConfigManager
 from gui.main_window import MainWindow
 
 class RapidRecon:
@@ -27,7 +28,8 @@ class RapidRecon:
     
     def __init__(self, config_file: str = "config.json"):
         self.config_file = config_file
-        self.config = self.load_config()
+        self.config_manager = ConfigManager(config_file)
+        self.config = self.config_manager.load_config()
         self.setup_logging()
         
         # Инициализация компонентов
@@ -55,74 +57,13 @@ class RapidRecon:
         Returns:
             Dict с конфигурацией
         """
-        default_config = {
-            "app": {
-                "name": "RapidRecon",
-                "version": "1.0.0",
-                "debug": False,
-                "max_threads": 10,
-                "update_interval": 0.5
-            },
-            "engine": {
-                "max_depth": 5,
-                "max_concurrent_tasks": 5,
-                "rate_limit": 50
-            },
-            "modules": {
-                "directory": "src/modules",
-                "auto_load": True,
-                "auto_discover": True,
-                "builtin_modules": [
-                    "ping_scanner",
-                    "port_scanner", 
-                    "service_detector"
-                ]
-            },
-            "gui": {
-                "width": 1400,
-                "height": 900,
-                "theme": "dark"
-            },
-            "logging": {
-                "level": "INFO",
-                "file": "rapidrecon.log",
-                "max_size_mb": 10
-            }
-        }
-        
-        try:
-            if os.path.exists(self.config_file):
-                import json
-                with open(self.config_file, 'r', encoding='utf-8') as f:
-                    loaded_config = json.load(f)
-                    # Рекурсивное обновление конфигурации по умолчанию
-                    self._update_dict_recursive(default_config, loaded_config)
-            
-            # Сохранение конфигурации (создание файла если не существует)
-            self.save_config(default_config)
-            
-        except Exception as e:
-            print(f"⚠️ Ошибка загрузки конфигурации: {e}. Используются значения по умолчанию.")
-        
-        return default_config
+        return self.config_manager.load_config()
     
-    def _update_dict_recursive(self, target: Dict, source: Dict):
-        """Рекурсивное обновление словаря"""
-        for key, value in source.items():
-            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
-                self._update_dict_recursive(target[key], value)
-            else:
-                target[key] = value
-    
-    def save_config(self, config: Dict[str, Any]):
+    def save_config(self, config: Dict[str, Any] = None):
         """Сохранение конфигурации в файл"""
-        try:
-            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
-            import json
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(config, f, indent=2, ensure_ascii=False)
-        except Exception as e:
-            print(f"⚠️ Ошибка сохранения конфигурации: {e}")
+        if config is None:
+            config = self.config
+        return self.config_manager.save_config(config)
     
     def setup_logging(self):
         """Настройка системы логирования"""
@@ -168,13 +109,14 @@ class RapidRecon:
                 discovered = self.module_manager.discover_modules()
                 self.logger.info(f"🔍 Обнаружено модулей: {len(discovered)}")
             
-            # Инициализация движка с callback для обновления GUI
+            # Инициализация движка с callback для обновления GUI и config_manager
             engine_config = self.config['engine']
             self.engine = PropagationEngine(
                 max_depth=engine_config['max_depth'],
                 max_concurrent_tasks=engine_config['max_concurrent_tasks'],
                 rate_limit=engine_config['rate_limit'],
-                update_callback=self.on_engine_update
+                update_callback=self.on_engine_update,
+                config_manager=self.config_manager
             )
             
             # Регистрация модулей
@@ -194,7 +136,7 @@ class RapidRecon:
                             self.engine.register_module(module_name, module_instance)
             
             # Инициализация GUI
-            self.gui = MainWindow(self.engine, self.module_manager)
+            self.gui = MainWindow(self.engine, self.module_manager, self.config_manager)
             
             # Настройка интервала обновления из конфигурации
             self.update_interval = self.config['app'].get('update_interval', 0.5)
@@ -217,7 +159,13 @@ class RapidRecon:
             try:
                 module_class = self.load_builtin_module(module_name)
                 if module_class:
-                    self.engine.register_module(module_name, module_class)
+                    # Передаем config_manager в модули, если они его поддерживают
+                    if hasattr(module_class, '__init__') and 'config_manager' in module_class.__init__.__code__.co_varnames:
+                        module_instance = module_class(self.engine.rate_limit, config_manager=self.config_manager)
+                    else:
+                        module_instance = module_class(self.engine.rate_limit)
+                    
+                    self.engine.register_module(module_name, module_instance)
                     registered_count += 1
                     self.logger.info(f"✅ Зарегистрирован встроенный модуль: {module_name}")
                 else:
@@ -240,7 +188,8 @@ class RapidRecon:
         module_paths = {
             "ping_scanner": "modules.ping_scanner.module.PingScanner",
             "port_scanner": "modules.port_scanner.module.PortScanner",
-            "service_detector": "modules.service_detector.module.ServiceDetector"
+            "service_detector": "modules.service_detector.module.ServiceDetector",
+            "subdomain_scanner": "modules.subdomain_scanner.module.SubdomainScanner"
         }
         
         if module_name not in module_paths:
@@ -375,6 +324,10 @@ class RapidRecon:
             self.logger.info(f"⚡ Лимит скорости: {self.engine.rate_limit}/сек")
             self.logger.info(f"🔄 Интервал обновления GUI: {self.update_interval}с")
             
+            # Информация о загруженных модулях
+            builtin_modules = self.config['modules'].get('builtin_modules', [])
+            self.logger.info(f"📦 Встроенные модули: {', '.join(builtin_modules)}")
+            
             # Запуск асинхронного движка в отдельном потоке
             self.engine_thread = threading.Thread(
                 target=self.start_engine_async,
@@ -429,9 +382,14 @@ class RapidRecon:
                 self.gui.destroy()
                 self.logger.info("✅ GUI уничтожен")
             
-            # Экспорт текущей конфигурации
-            self.save_config(self.config)
+            # Сохранение текущей конфигурации
+            self.save_config()
             self.logger.info("✅ Конфигурация сохранена")
+            
+            # Сохранение профилей сканирования
+            if hasattr(self.gui, 'config_manager'):
+                self.gui.config_manager.save_profiles()
+                self.logger.info("✅ Профили сканирования сохранены")
             
             # Экспорт результатов если есть
             if self.engine and self.engine.discovered_nodes:
@@ -475,7 +433,8 @@ class RapidRecon:
             'modules_status': module_stats,
             'threads_active': threading.active_count(),
             'uptime': getattr(self, 'start_time', 0),
-            'last_update': self.last_update_time
+            'last_update': self.last_update_time,
+            'active_profile': getattr(self.config_manager, 'active_profile', 'normal')
         }
     
     def add_scan_target(self, target: str):
@@ -500,6 +459,22 @@ class RapidRecon:
         """
         self.update_interval = max(0.1, interval)  # Минимальный интервал 0.1 секунды
         self.logger.info(f"🔄 Установлен интервал обновления GUI: {interval}с")
+    
+    def reload_config(self):
+        """
+        Перезагрузка конфигурации
+        """
+        self.config = self.config_manager.load_config()
+        self.logger.info("🔄 Конфигурация перезагружена")
+        
+        # Применяем новые настройки к компонентам
+        if self.engine:
+            engine_config = self.config['engine']
+            self.engine.max_depth = engine_config.get('max_depth', 5)
+            self.engine.rate_limit = engine_config.get('rate_limit', 50)
+            self.engine.max_concurrent_tasks = engine_config.get('max_concurrent_tasks', 5)
+        
+        self.update_interval = self.config['app'].get('update_interval', 0.5)
 
 
 def main():
