@@ -1,0 +1,9 @@
+{
+    "name": "subdomain_scanner",
+    "version": "1.0.0",
+    "description": "Поиск поддоменов через wordlist",
+    "author": "RapidRecon Team", 
+    "input_types": ["domain"],
+    "output_types": ["subdomains"],
+    "triggers": ["ping_scanner"]
+}
