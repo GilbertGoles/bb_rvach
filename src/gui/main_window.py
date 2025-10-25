@@ -442,7 +442,7 @@ class MainWindow:
                     
                     for name, value in stats:
                         with dpg.group(horizontal=True):
-                            dpg.add_text(f"{name}:", width=120)
+                            dpg.add_text(f"{name}:")
                             dpg.add_text(value, color=[123, 97, 255])
     
     def show_dashboard(self):
