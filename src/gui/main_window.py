@@ -130,6 +130,10 @@ class MainWindow:
     def initialize_gui(self):
         """Инициализация GUI"""
         try:
+            # Проверяем доступность графической среды
+            if not self.check_gui_environment():
+                raise RuntimeError("Graphical environment not available")
+                
             dpg.create_context()
             
             # Создание тем
@@ -162,7 +166,19 @@ class MainWindow:
             
         except Exception as e:
             self.logger.error(f"❌ Ошибка инициализации GUI: {e}")
+            self.logger.error(traceback.format_exc())
             raise
+    
+    def check_gui_environment(self):
+        """Проверка доступности графической среды"""
+        try:
+            # Простая проверка возможности создания окна
+            import dearpygui.dearpygui as dpg
+            dpg.create_context()
+            dpg.destroy_context()
+            return True
+        except Exception:
+            return False
     
     def create_main_window(self):
         """Создание главного окна с модульной архитектурой"""
@@ -690,10 +706,12 @@ class MainWindow:
             'export_time': timestamp
         }
         
-        with open(filename, 'w') as f:
-            json.dump(export_data, f, indent=2)
-        
-        self.add_to_log(f"💾 Network tree exported to {filename}")
+        try:
+            with open(filename, 'w') as f:
+                json.dump(export_data, f, indent=2)
+            self.add_to_log(f"💾 Network tree exported to {filename}")
+        except Exception as e:
+            self.add_to_log(f"❌ Export failed: {e}")
     
     def add_all_nodes_to_scope(self):
         """Добавить все узлы в scope"""
