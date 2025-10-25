@@ -148,7 +148,7 @@ class ControlsPanel:
             
             # Быстрые цели
             dpg.add_text("Quick Targets:", color=[150, 150, 160])
-            with dpg.group(horizontal=True, wrap=True):
+            with dpg.group(horizontal=True): 
                 quick_targets = [
                     ("🌐 Domain", "example.com"),
                     ("🏠 Local", "192.168.1.1"),
