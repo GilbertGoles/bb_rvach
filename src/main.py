@@ -124,7 +124,6 @@ class RapidRecon:
                 max_concurrent_tasks=engine_config['max_concurrent_tasks'],
                 rate_limit=engine_config['rate_limit'],
                 update_callback=self.on_engine_update,
-                config_manager=self.config_manager
             )
             
             # Регистрация модулей
