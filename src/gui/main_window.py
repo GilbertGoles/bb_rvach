@@ -9,6 +9,8 @@ import sys
 import os
 import time
 import json
+import threading
+import asyncio
 from datetime import datetime
 
 # Добавляем путь к модулям
@@ -88,10 +90,53 @@ class MainWindow:
         self.last_stats_update = 0
         self.stats_update_interval = 1.0  # секунды
         
+        # Поток для мониторинга движка
+        self.monitor_thread = None
+        self.monitor_running = False
+        
         # Инициализация GUI
         self.initialize_gui()
         
+        # Запуск мониторинга движка
+        self.start_engine_monitor()
+        
         self.logger.info("Графический интерфейс инициализирован")
+
+    def start_engine_monitor(self):
+        """Запуск мониторинга состояния движка"""
+        self.monitor_running = True
+        self.monitor_thread = threading.Thread(target=self._engine_monitor_loop, daemon=True)
+        self.monitor_thread.start()
+        self.logger.info("Мониторинг движка запущен")
+
+    def _engine_monitor_loop(self):
+        """Цикл мониторинга состояния движка"""
+        while self.monitor_running:
+            try:
+                # Проверяем состояние каждую секунду
+                time.sleep(1.0)
+                
+                # Обновляем данные из движка
+                self.update_engine_data()
+                
+                # Обновляем статистику в GUI потоке
+                if hasattr(self, 'last_stats_update'):
+                    current_time = time.time()
+                    if current_time - self.last_stats_update >= self.stats_update_interval:
+                        self._schedule_gui_update(self.update_statistics)
+                        self.last_stats_update = current_time
+                        
+            except Exception as e:
+                self.logger.error(f"Ошибка в мониторе движка: {e}")
+
+    def _schedule_gui_update(self, callback):
+        """Запланировать обновление GUI в основном потоке"""
+        # Этот метод будет вызывать callback в основном потоке GUI
+        # В DearPyGui это делается через колбэки
+        try:
+            callback()
+        except Exception as e:
+            self.logger.error(f"Ошибка при обновлении GUI: {e}")
     
     def initialize_gui(self):
         """Инициализация GUI"""
@@ -251,6 +296,13 @@ class MainWindow:
                             label="Add Target",
                             callback=self.add_target_from_dashboard
                         )
+                    
+                    # Кнопка для принудительного запуска движка
+                    dpg.add_button(
+                        label="DEBUG: Force Engine",
+                        callback=self.force_engine_start,
+                        width=-1
+                    )
                 
                 with dpg.child_window(width=400):
                     dpg.add_text("System Status")
@@ -317,43 +369,111 @@ class MainWindow:
             return
         
         intensity = dpg.get_value("dashboard_intensity")
-        self.update_activity_log(f"Starting {intensity} scan for: {target}")
-        self.logger.info(f"Starting scan for target: {target}, intensity: {intensity}")
+        self.update_activity_log(f"🚀 Starting {intensity} scan for: {target}")
+        self.logger.info(f"🚀 QUICK START SCAN: target={target}, intensity={intensity}")
         
-        # ИНТЕГРАЦИЯ С ДВИЖКОМ - запускаем настоящее сканирование
+        # Устанавливаем профиль сканирования
+        profile_map = {
+            "Stealth": "stealth",
+            "Normal": "normal", 
+            "Aggressive": "aggressive",
+            "Full": "aggressive"
+        }
+        profile_name = profile_map.get(intensity, "normal")
+        
+        if hasattr(self.engine, 'set_scan_profile'):
+            self.engine.set_scan_profile(profile_name)
+            self.update_activity_log(f"📊 Scan profile set to: {profile_name}")
+        
+        # Добавляем цель в движок
         if hasattr(self.engine, 'add_initial_target'):
-            self.logger.info("Adding target to engine via add_initial_target")
-            self.engine.add_initial_target(target)
-            self.update_activity_log(f"Target {target} added to engine queue")
+            self.logger.info("✅ Adding target to engine via add_initial_target")
+            try:
+                self.engine.add_initial_target(target)
+                self.update_activity_log(f"🎯 Target {target} added to engine queue")
+                
+                # Проверяем состояние очереди
+                if hasattr(self.engine, 'pending_scans'):
+                    queue_size = self.engine.pending_scans.qsize()
+                    self.update_activity_log(f"📋 Scan queue size: {queue_size}")
+                
+            except Exception as e:
+                self.logger.error(f"❌ Error in add_initial_target: {e}")
+                self.update_activity_log(f"ERROR adding target: {e}")
+        else:
+            self.logger.error("❌ Engine has no add_initial_target method!")
+            self.update_activity_log("ERROR: Engine not properly initialized")
         
-        # Запускаем через ControlsPanel
-        self.logger.info("Starting scan via ControlsPanel")
-        self.controls_panel.start_scan(target, intensity)
+        # Обновляем состояние сканирования
+        self.is_scanning = True
         self.update_scan_state()
         
-        # Запускаем обработку очереди в движке
-        self.logger.info("Starting engine processing")
-        self.start_engine_processing()
+        # Запускаем движок если он не запущен
+        self.start_engine_if_needed()
     
-    def start_engine_processing(self):
-        """Запуск обработки очереди в движке"""
-        import asyncio
-        import threading
+    def start_engine_if_needed(self):
+        """Запуск движка если он не запущен"""
+        try:
+            # Проверяем состояние движка
+            if hasattr(self.engine, 'is_running'):
+                if not self.engine.is_running:
+                    self.logger.info("🔄 Starting engine processing...")
+                    
+                    # Запускаем движок в отдельном потоке
+                    engine_thread = threading.Thread(
+                        target=self._run_engine_async,
+                        daemon=True,
+                        name="EngineProcessor"
+                    )
+                    engine_thread.start()
+                    self.update_activity_log("🔧 Engine processing started")
+                else:
+                    self.update_activity_log("⚡ Engine is already running")
+            else:
+                self.logger.warning("⚠️ Engine doesn't have is_running attribute")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error starting engine: {e}")
+            self.update_activity_log(f"ERROR starting engine: {e}")
+    
+    def _run_engine_async(self):
+        """Запуск асинхронного движка в отдельном потоке"""
+        try:
+            self.logger.info("🔄 Engine async thread started")
+            
+            # Создаем новый event loop для этого потока
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Запускаем обработку очереди
+            self.logger.info("🏃 Starting engine process_queue...")
+            result = loop.run_until_complete(self.engine.process_queue())
+            self.logger.info(f"🏁 Engine process_queue completed: {result}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Engine processing error: {e}")
+            self.update_activity_log(f"Engine error: {e}")
+    
+    def force_engine_start(self):
+        """Принудительный запуск движка для отладки"""
+        self.logger.info("🔧 FORCE ENGINE START")
+        self.update_activity_log("🔧 DEBUG: Force starting engine...")
         
-        def run_engine():
-            try:
-                self.logger.info("Engine processing thread started")
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self.engine.process_queue())
-            except Exception as e:
-                self.logger.error(f"Engine processing error: {e}")
-                self.update_activity_log(f"Engine error: {e}")
+        # Проверяем методы движка
+        engine_methods = [method for method in dir(self.engine) if not method.startswith('_')]
+        self.logger.info(f"Available engine methods: {engine_methods}")
         
-        # Запускаем движок в отдельном потоке
-        engine_thread = threading.Thread(target=run_engine, daemon=True)
-        engine_thread.start()
-        self.update_activity_log("Engine processing started in background")
+        # Проверяем состояние
+        if hasattr(self.engine, 'pending_scans'):
+            queue_size = self.engine.pending_scans.qsize()
+            self.update_activity_log(f"📋 Current queue size: {queue_size}")
+        
+        if hasattr(self.engine, 'discovered_nodes'):
+            nodes_count = len(self.engine.discovered_nodes)
+            self.update_activity_log(f"📊 Discovered nodes: {nodes_count}")
+        
+        # Запускаем движок
+        self.start_engine_if_needed()
     
     def add_target_from_dashboard(self):
         """Добавление цели из dashboard"""
@@ -367,16 +487,22 @@ class MainWindow:
     
     def update_scan_state(self):
         """Обновление состояния сканирования"""
-        state = self.controls_panel.get_scan_state()
-        dpg.set_value("scan_status", state['status'])
-        dpg.configure_item("scan_status", color=state['color'])
+        if self.is_scanning:
+            dpg.set_value("scan_status", "Scanning")
+            dpg.configure_item("scan_status", color=[255, 179, 64])  # warning color
+        else:
+            dpg.set_value("scan_status", "Ready")
+            dpg.configure_item("scan_status", color=[72, 199, 116])  # success color
     
     def update_activity_log(self, message: str):
         """Обновление лога активности"""
-        current_log = dpg.get_value("activity_log")
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        new_log = f"[{timestamp}] {message}\n{current_log}"
-        dpg.set_value("activity_log", new_log)
+        try:
+            current_log = dpg.get_value("activity_log")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            new_log = f"[{timestamp}] {message}\n{current_log}"
+            dpg.set_value("activity_log", new_log)
+        except Exception as e:
+            self.logger.error(f"Error updating activity log: {e}")
     
     def refresh_network_tree(self):
         """Обновление дерева сети"""
@@ -419,22 +545,12 @@ class MainWindow:
             total_ports = sum(len(host.get('ports', [])) for host in self.hosts_data.values())
             total_services = sum(len(host.get('services', [])) for host in self.hosts_data.values())
             
-            # Считаем уязвимости из данных узлов
-            vulnerabilities = []
-            for node in self.nodes_data.values():
-                if hasattr(node, 'vulnerabilities') and node.vulnerabilities:
-                    vulnerabilities.extend(node.vulnerabilities)
-                elif isinstance(node, dict) and node.get('vulnerabilities'):
-                    vulnerabilities.extend(node['vulnerabilities'])
-            
-            total_vulns = len(vulnerabilities)
-            
             return {
                 "Total Nodes": total_nodes,
                 "Active Hosts": total_hosts,
                 "Open Ports": total_ports,
                 "Running Services": total_services,
-                "Vulnerabilities Found": total_vulns,
+                "Vulnerabilities Found": engine_stats.get('vulnerabilities_found', 0),
                 "Successful Scans": engine_stats.get('successful_scans', 0),
                 "Failed Scans": engine_stats.get('failed_scans', 0),
                 "Pending Tasks": engine_stats.get('pending_tasks', 0)
@@ -449,24 +565,21 @@ class MainWindow:
         self.update_activity_log("Exporting network tree...")
     
     def handle_engine_event(self, event_type: str, data: Any = None):
-        """Обработка событий от движка - КЛЮЧЕВАЯ ФУНКЦИЯ"""
+        """Обработка событий от движка"""
         try:
-            self.logger.info(f"GUI received event: {event_type}, data: {data}")
+            self.logger.info(f"GUI received event: {event_type}")
             
             if event_type in ['node_discovered', 'node_added', 'module_results', 'progress_update']:
-                # ОБНОВЛЯЕМ ДАННЫЕ ИЗ ДВИЖКА ПРАВИЛЬНО
-                self.logger.info(f"Updating engine data for event: {event_type}")
+                # Обновляем данные из движка
                 self.update_engine_data()
                 
                 # Обновляем UI
                 if self.current_tab == "network_tree":
-                    self.logger.info(f"Updating network tree with {len(self.nodes_data)} nodes, {len(self.hosts_data)} hosts")
                     self.network_tree.update_tree(self.nodes_data, self.hosts_data)
                 elif self.current_tab == "hosts_table":
-                    self.logger.info(f"Updating hosts table with {len(self.hosts_data)} hosts")
                     self.hosts_table.update_table(self.hosts_data)
                 
-                # Обновляем статистику СРАЗУ
+                # Обновляем статистику
                 self.update_statistics()
                 
                 # Логируем событие
@@ -484,17 +597,13 @@ class MainWindow:
                 
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
-            self.logger.error(traceback.format_exc())
     
     def update_engine_data(self):
-        """Обновление данных из движка - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+        """Обновление данных из движка"""
         try:
-            self.logger.info("=== UPDATING ENGINE DATA ===")
-            
             # Получаем данные напрямую из движка
             if hasattr(self.engine, 'discovered_nodes'):
                 engine_nodes = self.engine.discovered_nodes
-                self.logger.info(f"Engine discovered_nodes: {len(engine_nodes)} nodes")
                 
                 # Конвертируем в словарь для network_tree
                 self.nodes_data = {}
@@ -505,23 +614,22 @@ class MainWindow:
                         'type': getattr(node, 'type', 'unknown'),
                         'label': getattr(node, 'data', 'Unknown'),
                         'data': getattr(node, 'data', {}),
-                        'timestamp': getattr(node, 'timestamp', time.time())
+                        'timestamp': getattr(node, 'timestamp', time.time()),
+                        'ports': getattr(node, 'ports', []),
+                        'services': getattr(node, 'services', []),
+                        'vulnerabilities': getattr(node, 'vulnerabilities', [])
                     }
-                self.logger.info(f"Converted to nodes_data: {len(self.nodes_data)} nodes")
             
             # Обновляем hosts_data из движка
             if hasattr(self.engine, 'hosts_data'):
                 engine_hosts = self.engine.hosts_data
-                self.logger.info(f"Engine hosts_data type: {type(engine_hosts)}")
-                
                 if isinstance(engine_hosts, dict):
                     self.hosts_data = engine_hosts.copy()
-                    self.logger.info(f"Copied hosts_data: {len(self.hosts_data)} hosts")
                 else:
                     # Если hosts_data это не словарь, создаем из discovered_nodes
                     self.hosts_data = {}
                     for node in getattr(self.engine, 'discovered_nodes', []):
-                        if hasattr(node, 'type') and node.type.name in ['ACTIVE_HOST', 'IP_ADDRESS']:
+                        if hasattr(node, 'type') and getattr(node, 'type').name in ['ACTIVE_HOST', 'IP_ADDRESS']:
                             ip = getattr(node, 'data', 'unknown')
                             self.hosts_data[ip] = {
                                 'hostname': getattr(node, 'data', 'Unknown'),
@@ -532,36 +640,21 @@ class MainWindow:
                                 'last_seen': datetime.now().strftime("%H:%M:%S"),
                                 'tags': ['discovered']
                             }
-                    self.logger.info(f"Created hosts_data from nodes: {len(self.hosts_data)} hosts")
             
-            self.logger.info(f"=== FINAL: nodes_data: {len(self.nodes_data)}, hosts_data: {len(self.hosts_data)} ===")
-                
         except Exception as e:
             self.logger.error(f"Error updating engine data: {e}")
-            self.logger.error(traceback.format_exc())
     
     def update_statistics(self):
         """Обновление статистики на боковой панели"""
         try:
-            self.logger.info("=== UPDATING STATISTICS ===")
-            
-            # Обновляем данные из движка перед расчетом статистики
-            self.update_engine_data()
-            
             # Рассчитываем статистику
             total_nodes = len(self.nodes_data)
             total_hosts = len(self.hosts_data)
             total_services = sum(len(host.get('services', [])) for host in self.hosts_data.values())
             total_ports = sum(len(host.get('ports', [])) for host in self.hosts_data.values())
             
-            self.logger.info(f"Calculated stats - Nodes: {total_nodes}, Hosts: {total_hosts}, Services: {total_services}, Ports: {total_ports}")
-            
             # Получаем статистику из движка
-            engine_stats = {}
-            if hasattr(self.engine, 'get_statistics'):
-                engine_stats = self.engine.get_statistics()
-                self.logger.info(f"Engine stats: {engine_stats}")
-            
+            engine_stats = self.engine.get_statistics() if hasattr(self.engine, 'get_statistics') else {}
             total_vulns = engine_stats.get('vulnerabilities_found', 0)
             total_exploits = engine_stats.get('exploits_successful', 0)
             
@@ -577,11 +670,8 @@ class MainWindow:
             pending_tasks = engine_stats.get('pending_tasks', 0)
             dpg.set_value("stat_active_scans", f"Active Scans: {pending_tasks}")
             
-            self.logger.info("=== STATISTICS UPDATED ===")
-            
         except Exception as e:
             self.logger.error(f"Error updating statistics: {e}")
-            self.logger.error(traceback.format_exc())
     
     def run(self):
         """Запуск GUI"""
@@ -589,12 +679,7 @@ class MainWindow:
             self.logger.info("Запуск графического интерфейса...")
             
             while dpg.is_dearpygui_running():
-                # Постоянно проверяем обновления от движка с интервалом
-                current_time = time.time()
-                if current_time - self.last_stats_update >= self.stats_update_interval:
-                    self.check_engine_updates()
-                    self.last_stats_update = current_time
-                
+                # Рендерим кадр
                 dpg.render_dearpygui_frame()
             
             self.destroy()
@@ -603,31 +688,17 @@ class MainWindow:
             self.logger.error(f"Ошибка запуска GUI: {e}")
             self.logger.error(traceback.format_exc())
     
-    def check_engine_updates(self):
-        """Проверка обновлений от движка"""
-        try:
-            self.logger.info("Checking engine updates...")
-            
-            # Проверяем состояние движка
-            if hasattr(self.engine, 'discovered_nodes'):
-                self.logger.info(f"Engine has {len(self.engine.discovered_nodes)} discovered nodes")
-            
-            if hasattr(self.engine, 'hosts_data'):
-                self.logger.info(f"Engine has hosts_data: {type(self.engine.hosts_data)}")
-            
-            # Обновляем данные из движка
-            self.update_engine_data()
-            
-            # Обновляем статистику
-            self.update_statistics()
-                    
-        except Exception as e:
-            self.logger.error(f"Error checking engine updates: {e}")
-            self.logger.error(traceback.format_exc())
-    
     def destroy(self):
         """Уничтожение GUI"""
         try:
+            # Останавливаем мониторинг
+            self.monitor_running = False
+            if self.monitor_thread and self.monitor_thread.is_alive():
+                self.monitor_thread.join(timeout=2.0)
+            
+            # Уничтожаем GUI контекст
             dpg.destroy_context()
+            self.logger.info("GUI уничтожен")
+            
         except Exception as e:
             self.logger.error(f"Ошибка уничтожения GUI: {e}")
