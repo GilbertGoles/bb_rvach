@@ -144,7 +144,7 @@ class ScopeManager:
             
             # Предустановленные суффиксы
             dpg.add_text("Quick Suffixes:", color=[150, 150, 160])
-            with dpg.group(horizontal=True, wrap=True):
+            with dpg.group(horizontal=True):
                 for suffix in self.common_suffixes:
                     dpg.add_button(
                         label=suffix,
