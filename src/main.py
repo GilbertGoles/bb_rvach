@@ -166,13 +166,13 @@ class RapidRecon:
                 
             self.last_update_time = current_time
             
-            # Передаем событие в GUI через очередь или напрямую
+            # Передаем событие в GUI
             if self.gui:
                 self.gui.handle_engine_event(event_type, data)
             
             # Логируем важные события
             if event_type in ['vulnerability_found', 'exploitation_success']:
-                self.logger.info(f"Engine event: {event_type}")
+                self.logger.info(f"Engine event: {event_type} - {data}")
                 
         except Exception as e:
             self.logger.warning(f"Ошибка в engine callback: {e}")
@@ -220,6 +220,9 @@ class RapidRecon:
                 self.gui.run()
         except Exception as e:
             self.logger.error(f"❌ Ошибка запуска GUI: {e}")
+            # Показываем сообщение об ошибке в консоли
+            print(f"❌ Ошибка запуска GUI: {e}")
+            print("💡 Попробуйте установить зависимости: pip install dearpygui")
             raise
     
     def run(self):
@@ -234,11 +237,18 @@ class RapidRecon:
             
             app_config = self.config['app']
             self.logger.info(f"📋 Версия: {app_config['version']}")
+            self.logger.info(f"🐛 Режим отладки: {app_config['debug']}")
             
             # Вывод информации о модулях
             engine_stats = self.engine.get_statistics()
             self.logger.info(f"🔧 Активных модулей: {engine_stats.get('active_modules', 0)}")
             self.logger.info(f"📊 Макс. глубина: {self.engine.max_depth}")
+            self.logger.info(f"⚡ Лимит скорости: {self.engine.rate_limit}/сек")
+            self.logger.info(f"🔄 Интервал обновления GUI: {self.update_interval}с")
+            
+            # Информация о загруженных модулях
+            builtin_modules = self.config['modules'].get('builtin_modules', [])
+            self.logger.info(f"📦 Встроенные модули: {', '.join(builtin_modules)}")
             
             # Запуск асинхронного движка в отдельном потоке
             self.engine_thread = threading.Thread(
@@ -275,6 +285,11 @@ class RapidRecon:
                 self.engine.stop_engine()
                 self.logger.info("✅ Движок остановлен")
             
+            # Завершение асинхронного event loop
+            if self.event_loop and self.event_loop.is_running():
+                self.event_loop.stop()
+                self.logger.info("✅ Event loop остановлен")
+            
             # Ожидание завершения потока движка
             if self.engine_thread and self.engine_thread.is_alive():
                 self.engine_thread.join(timeout=3.0)
@@ -283,11 +298,35 @@ class RapidRecon:
                 else:
                     self.logger.info("✅ Поток движка завершен")
             
+            # Уничтожение GUI
+            if self.gui:
+                try:
+                    self.gui.destroy()
+                    self.logger.info("✅ GUI уничтожен")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Ошибка уничтожения GUI: {e}")
+            
             # Сохранение конфигурации
             self.config_manager.save_config()
             self.config_manager.save_profiles()
             self.config_manager.save_module_configs()
             self.logger.info("✅ Все конфигурации сохранены")
+            
+            # Экспорт результатов если есть
+            if self.engine and self.engine.discovered_nodes:
+                results_file = f"rapidrecon_results_{int(time.time())}.json"
+                self.engine.export_results(results_file)
+                self.logger.info(f"💾 Результаты экспортированы в: {results_file}")
+            
+            # Отчет о найденных уязвимостях и успешных атаках
+            if hasattr(self.engine, 'stats'):
+                vuln_count = self.engine.stats.get('vulnerabilities_found', 0)
+                exploit_count = self.engine.stats.get('exploits_successful', 0)
+                
+                if vuln_count > 0:
+                    self.logger.warning(f"🔴 Обнаружено уязвимостей: {vuln_count}")
+                if exploit_count > 0:
+                    self.logger.critical(f"💥 Успешных атак: {exploit_count}")
             
             self.logger.info("🎉 RapidRecon завершил работу")
             
@@ -297,6 +336,65 @@ class RapidRecon:
     def show_error_message(self, message: str):
         """Показать сообщение об ошибке"""
         print(f"❌ Ошибка: {message}")
+    
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Получение статуса приложения
+        
+        Returns:
+            Dict с информацией о статусе
+        """
+        engine_stats = self.engine.get_statistics() if self.engine else {}
+        
+        return {
+            'is_running': self.is_running,
+            'engine_status': engine_stats,
+            'threads_active': threading.active_count(),
+            'uptime': getattr(self, 'start_time', 0),
+            'last_update': self.last_update_time,
+            'active_profile': getattr(self.config_manager, 'active_profile', 'normal'),
+            'vulnerabilities_found': engine_stats.get('vulnerabilities_found', 0),
+            'exploits_successful': engine_stats.get('exploits_successful', 0)
+        }
+    
+    def add_scan_target(self, target: str):
+        """
+        Добавление цели для сканирования
+        
+        Args:
+            target: Цель для сканирования (домен, IP, диапазон)
+        """
+        if self.engine:
+            self.engine.add_initial_target(target)
+            self.logger.info(f"🎯 Добавлена цель для сканирования: {target}")
+        else:
+            self.logger.error("❌ Движок не инициализирован")
+    
+    def set_update_interval(self, interval: float):
+        """
+        Установка интервала обновления GUI
+        
+        Args:
+            interval: Интервал в секундах
+        """
+        self.update_interval = max(0.1, interval)
+        self.logger.info(f"🔄 Установлен интервал обновления GUI: {interval}с")
+    
+    def reload_config(self):
+        """
+        Перезагрузка конфигурации
+        """
+        self.config = self.config_manager.load_config()
+        self.logger.info("🔄 Конфигурация перезагружена")
+        
+        # Применяем новые настройки к компонентам
+        if self.engine:
+            engine_config = self.config['engine']
+            self.engine.max_depth = engine_config.get('max_depth', 5)
+            self.engine.rate_limit = engine_config.get('rate_limit', 50)
+            self.engine.max_concurrent_tasks = engine_config.get('max_concurrent_tasks', 5)
+        
+        self.update_interval = self.config['app'].get('update_interval', 0.5)
 
 
 def main():
@@ -306,11 +404,10 @@ def main():
     # Установка времени начала работы
     start_time = time.time()
     
-    # Создание и запуск приложения
-    app = RapidRecon()
-    app.start_time = start_time
-    
     try:
+        # Создание и запуск приложения
+        app = RapidRecon()
+        app.start_time = start_time
         app.run()
     except Exception as e:
         logging.getLogger('RapidRecon').error(f"💥 Необработанная ошибка: {e}")
