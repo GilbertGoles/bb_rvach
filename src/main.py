@@ -58,21 +58,6 @@ class RapidRecon:
         # Настройка обработчиков сигналов
         self.setup_signal_handlers()
     
-    def load_config(self) -> Dict[str, Any]:
-        """
-        Загрузка конфигурации приложения
-        
-        Returns:
-            Dict с конфигурацией
-        """
-        return self.config_manager.load_config()
-    
-    def save_config(self, config: Dict[str, Any] = None):
-        """Сохранение конфигурации в файл"""
-        if config is None:
-            config = self.config
-        return self.config_manager.save_config(config)
-    
     def setup_logging(self):
         """Настройка системы логирования"""
         log_config = self.config['logging']
@@ -120,8 +105,8 @@ class RapidRecon:
             # Инициализация движка БЕЗ параметров конфигурации
             self.engine = PropagationEngine(update_callback=self.on_engine_update)
             
-            # Загрузка модулей
-            self.load_modules()
+            # Загрузка и регистрация модулей
+            self.load_and_register_modules()
             
             # Инициализация GUI БЕЗ config_manager
             self.gui = MainWindow(self.engine, self.module_manager)
@@ -135,12 +120,9 @@ class RapidRecon:
             self.logger.error(f"❌ Ошибка инициализации компонентов: {e}")
             raise
     
-    def load_modules(self):
-        """Загрузка и регистрация модулей"""
+    def load_and_register_modules(self):
+        """Загрузка и регистрация модулей в движке"""
         try:
-            # Загружаем модули через менеджер
-            self.module_manager.load_modules()
-            
             # Регистрируем модули в движке (передаем КЛАССЫ)
             module_classes = {
                 'ping_scanner': PingScanner,
@@ -173,8 +155,6 @@ class RapidRecon:
                             self.engine.register_module(module_name, module_class)
                             additional_registered += 1
                             self.logger.info(f"✅ Зарегистрирован встроенный модуль: {module_name}")
-                        else:
-                            self.logger.warning(f"⚠️ Не удалось загрузить встроенный модуль: {module_name}")
                     except Exception as e:
                         self.logger.error(f"❌ Ошибка регистрации встроенного модуля {module_name}: {e}")
             
@@ -248,7 +228,6 @@ class RapidRecon:
             # Обработка различных событий от движка
             if event_type in ['node_discovered', 'node_added', 'task_completed']:
                 if self.gui:
-                    # Обновляем граф и статистику
                     self.gui.update_graph_from_engine()
                     self.gui.update_statistics()
                     
@@ -361,12 +340,6 @@ class RapidRecon:
             builtin_modules = self.config['modules'].get('builtin_modules', [])
             self.logger.info(f"📦 Встроенные модули: {', '.join(builtin_modules)}")
             
-            # Информация о конфигурации модулей
-            for module_name in builtin_modules:
-                module_config = self.config_manager.get_module_config(module_name)
-                if module_config:
-                    self.logger.debug(f"⚙️ Конфигурация {module_name}: {module_config}")
-            
             # Запуск асинхронного движка в отдельном потоке
             self.engine_thread = threading.Thread(
                 target=self.start_engine_async,
@@ -421,17 +394,11 @@ class RapidRecon:
                 self.gui.destroy()
                 self.logger.info("✅ GUI уничтожен")
             
-            # Сохранение текущей конфигурации
-            self.save_config()
-            self.logger.info("✅ Конфигурация сохранена")
-            
-            # Сохранение профилей сканирования
+            # Сохранение конфигурации
+            self.config_manager.save_config()
             self.config_manager.save_profiles()
-            self.logger.info("✅ Профили сканирования сохранены")
-            
-            # Сохранение конфигурации модулей
             self.config_manager.save_module_configs()
-            self.logger.info("✅ Конфигурации модулей сохранены")
+            self.logger.info("✅ Все конфигурации сохранены")
             
             # Экспорт результатов если есть
             if self.engine and self.engine.discovered_nodes:
@@ -472,16 +439,10 @@ class RapidRecon:
             Dict с информацией о статусе
         """
         engine_stats = self.engine.get_statistics() if self.engine else {}
-        module_stats = {
-            'available_modules': self.module_manager.get_available_modules_count() if self.module_manager else 0,
-            'loaded_modules': self.module_manager.get_loaded_modules_count() if self.module_manager else 0,
-            'builtin_modules': len(self.config['modules'].get('builtin_modules', []))
-        }
         
         return {
             'is_running': self.is_running,
             'engine_status': engine_stats,
-            'modules_status': module_stats,
             'threads_active': threading.active_count(),
             'uptime': getattr(self, 'start_time', 0),
             'last_update': self.last_update_time,
@@ -528,53 +489,6 @@ class RapidRecon:
             self.engine.max_concurrent_tasks = engine_config.get('max_concurrent_tasks', 5)
         
         self.update_interval = self.config['app'].get('update_interval', 0.5)
-    
-    def get_vulnerability_report(self) -> Dict[str, Any]:
-        """
-        Получить отчет об обнаруженных уязвимостях
-        
-        Returns:
-            Dict с информацией об уязвимостях
-        """
-        if not self.engine:
-            return {}
-        
-        vulnerabilities = []
-        exploits = []
-        
-        for node in self.engine.discovered_nodes:
-            if hasattr(node, 'type'):
-                if node.type.value == 'vulnerability':
-                    vulnerabilities.append({
-                        'target': node.data,
-                        'severity': node.metadata.get('severity', 'unknown'),
-                        'cve': node.vulnerability_data.get('cve', 'Unknown'),
-                        'description': node.vulnerability_data.get('description', ''),
-                        'cvss_score': node.vulnerability_data.get('cvss_score', 0.0),
-                        'source': node.source
-                    })
-                elif node.type.value == 'exploitation_success':
-                    exploits.append({
-                        'target': node.data,
-                        'access_type': node.exploit_data.get('access_type', 'Unknown'),
-                        'credentials': node.exploit_data.get('credentials', {}),
-                        'shell_obtained': node.exploit_data.get('shell_obtained', False),
-                        'source': node.source
-                    })
-        
-        return {
-            'total_vulnerabilities': len(vulnerabilities),
-            'total_exploits': len(exploits),
-            'vulnerabilities': vulnerabilities,
-            'successful_exploits': exploits,
-            'summary': {
-                'critical': len([v for v in vulnerabilities if v['severity'] == 'critical']),
-                'high': len([v for v in vulnerabilities if v['severity'] == 'high']),
-                'medium': len([v for v in vulnerabilities if v['severity'] == 'medium']),
-                'low': len([v for v in vulnerabilities if v['severity'] == 'low']),
-                'successful_attacks': len(exploits)
-            }
-        }
 
 
 def main():
