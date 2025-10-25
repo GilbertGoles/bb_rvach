@@ -1,5 +1,5 @@
 """
-Главное окно RapidRecon в стиле Obsidian с полным функционалом
+Главное окно RapidRecon в стиле Obsidian с полным функционалом - ИСПРАВЛЕННАЯ ВЕРСИЯ
 """
 import dearpygui.dearpygui as dpg
 from typing import Dict, Any, List, Optional
@@ -88,7 +88,7 @@ class DangerTheme:
         return danger_theme
 
 class GraphVisualization:
-    """Визуализация графа в стиле Obsidian"""
+    """Визуализация графа в стиле Obsidian - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
     
     def __init__(self):
         self.nodes = {}
@@ -99,99 +99,133 @@ class GraphVisualization:
     
     def draw_graph(self, width: int, height: int):
         """Отрисовка графа"""
-        # Фон графа
-        dpg.draw_rectangle(
-            [0, 0], 
-            [width, height], 
-            fill=[25, 25, 32],
-            parent="graph_canvas"
-        )
-        
-        # Сетка (тонкая)
-        grid_size = 50
-        for x in range(0, width, grid_size):
-            dpg.draw_line(
-                [x, 0], [x, height],
-                color=[40, 40, 50],
-                thickness=1,
+        try:
+            # Фон графа
+            dpg.draw_rectangle(
+                [0, 0], 
+                [width, height], 
+                fill=[25, 25, 32],
                 parent="graph_canvas"
             )
-        for y in range(0, height, grid_size):
-            dpg.draw_line(
-                [0, y], [width, y],
-                color=[40, 40, 50],
-                thickness=1,
-                parent="graph_canvas"
-            )
-        
-        # Отрисовка связей
-        for edge in self.edges:
-            source = self.nodes.get(edge['source'])
-            target = self.nodes.get(edge['target'])
-            if source and target:
+            
+            # Сетка (тонкая)
+            grid_size = 50
+            for x in range(0, width, grid_size):
                 dpg.draw_line(
-                    source['position'], target['position'],
-                    color=edge['color'],
-                    thickness=edge['thickness'],
+                    [x, 0], [x, height],
+                    color=[40, 40, 50],
+                    thickness=1,
                     parent="graph_canvas"
                 )
-        
-        # Отрисовка узлов
-        for node_id, node in self.nodes.items():
-            pos = node['position']
+            for y in range(0, height, grid_size):
+                dpg.draw_line(
+                    [0, y], [width, y],
+                    color=[40, 40, 50],
+                    thickness=1,
+                    parent="graph_canvas"
+                )
             
-            # Основной круг узла
-            dpg.draw_circle(
-                pos, node['radius'],
-                fill=node['color'],
-                color=[255, 255, 255, 100] if node_id != self.selected_node else [255, 255, 0, 200],
-                thickness=3 if node_id == self.selected_node else 2,
-                parent="graph_canvas"
-            )
+            # Отрисовка связей
+            for edge in self.edges:
+                source = self.nodes.get(edge['source'])
+                target = self.nodes.get(edge['target'])
+                if source and target:
+                    dpg.draw_line(
+                        source['position'], target['position'],
+                        color=edge['color'],
+                        thickness=edge['thickness'],
+                        parent="graph_canvas"
+                    )
             
-            # Иконка узла
-            icon = node.get('icon', '•')
-            dpg.draw_text(
-                [pos[0] - 4, pos[1] - 6],
-                icon,
-                color=[255, 255, 255],
-                size=14,
-                parent="graph_canvas"
-            )
-            
-            # Текст метки (только при достаточном масштабе)
-            dpg.draw_text(
-                [pos[0] - len(node['label']) * 3, pos[1] + node['radius'] + 8],
-                node['label'],
-                color=[200, 200, 200],
-                size=11,
-                parent="graph_canvas"
-            )
+            # Отрисовка узлов
+            for node_id, node in self.nodes.items():
+                pos = node['position']
+                
+                # Основной круг узла
+                dpg.draw_circle(
+                    pos, node['radius'],
+                    fill=node['color'],
+                    color=[255, 255, 255, 100] if node_id != self.selected_node else [255, 255, 0, 200],
+                    thickness=3 if node_id == self.selected_node else 2,
+                    parent="graph_canvas"
+                )
+                
+                # Иконка узла
+                icon = node.get('icon', '•')
+                dpg.draw_text(
+                    [pos[0] - 4, pos[1] - 6],
+                    icon,
+                    color=[255, 255, 255],
+                    size=14,
+                    parent="graph_canvas"
+                )
+                
+                # Текст метки
+                dpg.draw_text(
+                    [pos[0] - len(node['label']) * 3, pos[1] + node['radius'] + 8],
+                    node['label'],
+                    color=[200, 200, 200],
+                    size=11,
+                    parent="graph_canvas"
+                )
+        except Exception as e:
+            logging.error(f"Error drawing graph: {e}")
     
     def add_node(self, node_data: Dict[str, Any]) -> int:
         """Добавить узел"""
-        node_id = self.node_counter
-        self.node_counter += 1
-        
-        # Определяем тип и настройки узла
-        node_type = node_data.get('type', 'custom')
-        node_config = self._get_node_config(node_type)
-        
-        # Позиционирование (интеллектуальное)
-        position = self._calculate_node_position(node_id, node_type)
-        
-        self.nodes[node_id] = {
-            'id': node_id,
-            'label': self._truncate_label(node_data.get('data', 'Node'), 12),
-            'type': node_type,
-            'data': node_data,
-            'position': position,
-            'radius': node_config['radius'],
-            'color': node_config['color'],
-            'icon': node_config['icon']
-        }
-        
-        return node_id
+        try:
+            node_id = self.node_counter
+            self.node_counter += 1
+            
+            # Определяем тип и настройки узла
+            node_type = node_data.get('type', 'custom')
+            node_config = self._get_node_config(node_type)
+            
+            # Позиционирование
+            position = self._calculate_node_position(node_id, node_type)
+            
+            # Создаем данные узла
+            label = self._get_node_label(node_data)
+            
+            self.nodes[node_id] = {
+                'id': node_id,
+                'label': label,
+                'type': node_type,
+                'data': node_data,
+                'position': position,
+                'radius': node_config['radius'],
+                'color': node_config['color'],
+                'icon': node_config['icon'],
+                'original_data': node_data  # Сохраняем оригинальные данные для деталей
+            }
+            
+            return node_id
+        except Exception as e:
+            logging.error(f"Error adding node: {e}")
+            return -1
+    
+    def _get_node_label(self, node_data: Dict[str, Any]) -> str:
+        """Получить метку для узла"""
+        try:
+            data = node_data.get('data', '')
+            node_type = node_data.get('type', '')
+            
+            if node_type == 'initial_target':
+                return str(data)
+            elif node_type == 'subdomain':
+                return str(data)
+            elif node_type == 'active_host':
+                return str(data)
+            elif node_type == 'open_ports':
+                ports = node_data.get('ports', [])
+                return f"Ports: {len(ports)}"
+            elif node_type == 'service':
+                service = node_data.get('service_name', 'Unknown')
+                return f"{service}"
+            else:
+                return str(data)[:15]
+        except:
+            return "Unknown"
     
     def _get_node_config(self, node_type: str) -> Dict[str, Any]:
         """Конфигурация узлов по типам"""
@@ -296,29 +330,72 @@ class GraphVisualization:
     
     def add_edge(self, source_id: int, target_id: int, edge_type: str = "normal"):
         """Добавить связь"""
-        if source_id in self.nodes and target_id in self.nodes:
-            edge_configs = {
-                "normal": {"color": [150, 150, 150, 100], "thickness": 2},
-                "exploitation": {"color": [255, 60, 60, 150], "thickness": 3},
-                "vulnerability": {"color": [255, 100, 100, 120], "thickness": 2},
-                "lateral": {"color": [255, 165, 0, 150], "thickness": 3}
-            }
-            
-            config = edge_configs.get(edge_type, edge_configs["normal"])
-            
-            self.edges.append({
-                'source': source_id,
-                'target': target_id,
-                'type': edge_type,
-                'color': config['color'],
-                'thickness': config['thickness']
-            })
+        try:
+            if source_id in self.nodes and target_id in self.nodes:
+                edge_configs = {
+                    "normal": {"color": [150, 150, 150, 100], "thickness": 2},
+                    "exploitation": {"color": [255, 60, 60, 150], "thickness": 3},
+                    "vulnerability": {"color": [255, 100, 100, 120], "thickness": 2},
+                    "lateral": {"color": [255, 165, 0, 150], "thickness": 3},
+                    "dns": {"color": [86, 156, 214, 120], "thickness": 2},
+                    "port": {"color": [123, 97, 255, 120], "thickness": 2}
+                }
+                
+                config = edge_configs.get(edge_type, edge_configs["normal"])
+                
+                self.edges.append({
+                    'source': source_id,
+                    'target': target_id,
+                    'type': edge_type,
+                    'color': config['color'],
+                    'thickness': config['thickness']
+                })
+        except Exception as e:
+            logging.error(f"Error adding edge: {e}")
     
-    def _truncate_label(self, label: str, max_length: int = 15) -> str:
-        """Обрезать длинные метки"""
-        if len(label) <= max_length:
-            return label
-        return label[:max_length-3] + "..."
+    def get_node_details(self, node_id: int) -> str:
+        """Получить детальную информацию об узле"""
+        try:
+            if node_id not in self.nodes:
+                return "Node not found"
+            
+            node = self.nodes[node_id]
+            details = []
+            
+            details.append(f"=== {node['label']} ===")
+            details.append(f"Type: {node['type']}")
+            details.append(f"ID: {node_id}")
+            
+            # Добавляем специфическую информацию в зависимости от типа
+            if 'original_data' in node:
+                data = node['original_data']
+                if isinstance(data, dict):
+                    for key, value in data.items():
+                        if key not in ['position', 'color', 'radius', 'icon']:
+                            details.append(f"{key}: {value}")
+                else:
+                    details.append(f"Data: {data}")
+            
+            # Добавляем информацию о связях
+            connections = []
+            for edge in self.edges:
+                if edge['source'] == node_id:
+                    target_node = self.nodes.get(edge['target'])
+                    if target_node:
+                        connections.append(f"→ {target_node['label']} ({edge['type']})")
+                elif edge['target'] == node_id:
+                    source_node = self.nodes.get(edge['source'])
+                    if source_node:
+                        connections.append(f"← {source_node['label']} ({edge['type']})")
+            
+            if connections:
+                details.append("\nConnections:")
+                details.extend(connections)
+            
+            return "\n".join(details)
+        except Exception as e:
+            logging.error(f"Error getting node details: {e}")
+            return f"Error getting details: {e}"
     
     def clear(self):
         """Очистить граф"""
@@ -329,7 +406,7 @@ class GraphVisualization:
 
 class MainWindow:
     """
-    Главный интерфейс RapidRecon в стиле Obsidian с полным функционалом
+    Главный интерфейс RapidRecon в стиле Obsidian с полным функционалом - ИСПРАВЛЕННАЯ ВЕРСИЯ
     """
     
     def __init__(self, engine, module_manager):
@@ -341,8 +418,9 @@ class MainWindow:
         self.settings_window_open = False
         self.selected_targets = set()
         self.last_update_time = 0
-        self.update_interval = 2.0  # Обновление каждые 2 секунды
-        self.discovered_nodes = {}  # Локальное хранилище обнаруженных узлов
+        self.update_interval = 1.0  # Обновление каждую секунду
+        self.discovered_nodes = {}
+        self.node_id_map = {}  # Маппинг ID движка на ID графа
         
         self.logger.info("🎨 Инициализация графического интерфейса...")
         
@@ -482,7 +560,7 @@ class MainWindow:
             label="📋 Scan Profiles",
             default_open=True
         ):
-            profiles = ["stealth", "normal", "aggressive"]  # Заглушка
+            profiles = ["stealth", "normal", "aggressive"]
             for profile in profiles:
                 dpg.add_button(
                     label=f"• {profile.title()}",
@@ -661,15 +739,29 @@ class MainWindow:
                 dpg.add_button(label="🔴 Show Vulnerabilities", callback=self.highlight_vulnerabilities)
             
             # Легенда графа
-            with dpg.collapsing_header(label="🎨 Map Legend", default_open=False):
-                with dpg.group(horizontal=True):
-                    dpg.add_text("🎯 Initial Target")
-                    dpg.add_text("🌐 Subdomain") 
-                    dpg.add_text("💻 Active Host")
-                    dpg.add_text("🔓 Open Ports")
-                    dpg.add_text("🔴 Vulnerability")
-                    dpg.add_text("💥 Exploitation")
-                    dpg.add_text("💀 Success")
+            with dpg.collapsing_header(label="🎨 Map Legend", default_open=True):
+                with dpg.table(header_row=False, policy=dpg.mvTable_SizingFixedFit):
+                    dpg.add_table_column()
+                    dpg.add_table_column()
+                    
+                    with dpg.table_row():
+                        dpg.add_text("🎯", color=[72, 199, 116])
+                        dpg.add_text("Initial Target")
+                    with dpg.table_row():
+                        dpg.add_text("🌐", color=[86, 156, 214])
+                        dpg.add_text("Subdomain")
+                    with dpg.table_row():
+                        dpg.add_text("💻", color=[255, 179, 64])
+                        dpg.add_text("Active Host")
+                    with dpg.table_row():
+                        dpg.add_text("🔓", color=[123, 97, 255])
+                        dpg.add_text("Open Ports")
+                    with dpg.table_row():
+                        dpg.add_text("🔴", color=[255, 92, 87])
+                        dpg.add_text("Vulnerability")
+                    with dpg.table_row():
+                        dpg.add_text("💥", color=[255, 60, 60])
+                        dpg.add_text("Exploitation")
             
             # Область графа
             with dpg.child_window(
@@ -693,7 +785,7 @@ class MainWindow:
                 dpg.add_text("Discovered Infrastructure")
                 dpg.add_tree_node(
                     tag="nodes_tree",
-                    label="Network Topology",
+                    label="Network Topology (0 nodes)",
                     default_open=True
                 )
             
@@ -775,9 +867,7 @@ class MainWindow:
                     label="💥 Start Exploitation",
                     callback=self.start_exploitation
                 )
-                # Применяем красную тему к кнопке эксплуатации
-                if hasattr(self, 'danger_theme'):
-                    dpg.bind_item_theme(exploit_button, self.danger_theme)
+                dpg.bind_item_theme(exploit_button, self.danger_theme)
                 
                 dpg.add_button(
                     label="🔍 Scan for Exploits",
@@ -1127,6 +1217,7 @@ class MainWindow:
                 self.engine.clear_results()
             self.graph.clear()
             self.discovered_nodes.clear()
+            self.node_id_map.clear()
             dpg.set_value("activity_log", "")
             # Сбрасываем статистику
             dpg.set_value("stat_nodes", "Nodes: 0")
@@ -1143,7 +1234,7 @@ class MainWindow:
             # Очищаем дерево узлов
             if dpg.does_item_exist("nodes_tree"):
                 dpg.delete_item("nodes_tree", children_only=True)
-                dpg.add_tree_node(tag="nodes_tree", label="Network Topology", default_open=True, parent="results_tab")
+                dpg.set_value("nodes_tree", "Network Topology (0 nodes)")
             
             self.add_to_log("🧹 All results cleared")
         except Exception as e:
@@ -1154,10 +1245,13 @@ class MainWindow:
         """Обновление графа на основе данных сканирования"""
         try:
             # Очищаем только отрисованные элементы, но сохраняем данные
-            dpg.delete_item("graph_canvas", children_only=True)
+            if dpg.does_item_exist("graph_canvas"):
+                dpg.delete_item("graph_canvas", children_only=True)
             
             # Рисуем граф с текущими данными
-            self.graph.draw_graph(1000, 600)
+            container_width = dpg.get_item_width("graph_container")
+            container_height = dpg.get_item_height("graph_container")
+            self.graph.draw_graph(container_width - 20, container_height - 20)
             
         except Exception as e:
             self.logger.error(f"Error updating graph: {e}")
@@ -1166,7 +1260,8 @@ class MainWindow:
         """Очистка графа"""
         try:
             self.graph.clear()
-            dpg.delete_item("graph_canvas", children_only=True)
+            if dpg.does_item_exist("graph_canvas"):
+                dpg.delete_item("graph_canvas", children_only=True)
             self.add_to_log("🗺️ Graph cleared")
         except Exception as e:
             self.logger.error(f"Error clearing graph: {e}")
@@ -1297,14 +1392,7 @@ class MainWindow:
                 if self.is_scanning:
                     try:
                         # Обновляем статистику
-                        stats = self.engine.get_statistics() if hasattr(self.engine, 'get_statistics') else {}
-                        
-                        # Обновляем счетчики в боковой панели
-                        if 'nodes_discovered' in stats:
-                            dpg.set_value("stat_nodes", f"Nodes: {stats['nodes_discovered']}")
-                        elif 'active_modules' in stats:
-                            # Если нет специальной статистики, используем количество узлов в графе
-                            dpg.set_value("stat_nodes", f"Nodes: {len(self.graph.nodes)}")
+                        self._update_statistics()
                         
                         # Обновляем граф
                         self.update_graph()
@@ -1321,6 +1409,23 @@ class MainWindow:
         # Устанавливаем callback для обновлений
         dpg.set_render_callback(update_ui)
     
+    def _update_statistics(self):
+        """Обновление статистики"""
+        try:
+            # Обновляем счетчики на основе данных графа
+            nodes_count = len(self.graph.nodes)
+            services_count = sum(1 for node in self.graph.nodes.values() if node['type'] == 'service')
+            targets_count = sum(1 for node in self.graph.nodes.values() if node['type'] in ['initial_target', 'active_host'])
+            vulnerabilities_count = sum(1 for node in self.graph.nodes.values() if node['type'] == 'vulnerability')
+            
+            dpg.set_value("stat_nodes", f"Nodes: {nodes_count}")
+            dpg.set_value("stat_services", f"Services: {services_count}")
+            dpg.set_value("stat_targets", f"Targets: {targets_count}")
+            dpg.set_value("stat_vulns", f"Vulnerabilities: {vulnerabilities_count}")
+            
+        except Exception as e:
+            self.logger.error(f"Error updating statistics: {e}")
+    
     def _update_targets_list(self):
         """Обновление списка обнаруженных целей"""
         try:
@@ -1328,8 +1433,9 @@ class MainWindow:
             
             # Используем узлы из графа
             for node_id, node in self.graph.nodes.items():
-                target_info = f"{node['label']} - {node['type']}"
-                targets.append(target_info)
+                if node['type'] in ['initial_target', 'active_host', 'subdomain']:
+                    target_info = f"{node['label']} - {node['type']}"
+                    targets.append(target_info)
             
             # Обновляем список в окне выбора целей
             dpg.configure_item("discovered_targets_list", items=targets)
@@ -1349,6 +1455,9 @@ class MainWindow:
             # Очищаем старое дерево
             dpg.delete_item("nodes_tree", children_only=True)
             
+            # Обновляем заголовок с количеством узлов
+            dpg.set_value("nodes_tree", f"Network Topology ({len(self.graph.nodes)} nodes)")
+            
             # Группируем узлы по типам
             nodes_by_type = {}
             for node_id, node in self.graph.nodes.items():
@@ -1361,100 +1470,220 @@ class MainWindow:
             for node_type, nodes in nodes_by_type.items():
                 with dpg.tree_node(label=f"{node_type.title()} ({len(nodes)})", parent="nodes_tree"):
                     for node in nodes:
-                        node_label = f"{node['label']} - {node['type']}"
-                        dpg.add_text(node_label)
-                        
+                        node_label = f"{node['label']}"
+                        with dpg.tree_node(label=node_label):
+                            # Добавляем детальную информацию
+                            details = self.graph.get_node_details(node['id'])
+                            dpg.add_text(details)
+                            
         except Exception as e:
             self.logger.error(f"Error updating nodes tree: {e}")
     
     def handle_engine_event(self, event_type: str, data: Any = None):
-        """Обработка событий от движка"""
+        """Обработка событий от движка - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         try:
-            self.logger.info(f"GUI received engine event: {event_type} - {data}")
+            self.logger.info(f"GUI received engine event: {event_type}")
             
             if event_type == 'node_added':
-                self.add_to_log(f"🎯 Target added: {data}")
+                self._handle_node_added(data)
                 
             elif event_type == 'node_discovered':
-                self.add_to_log(f"🔍 Node discovered: {data}")
-                self._process_discovered_node(data)
+                self._handle_node_discovered(data)
                 
             elif event_type == 'module_results':
-                self.add_to_log(f"⚙️ Module results received")
-                if data and isinstance(data, dict):
-                    self._process_module_results(data)
+                self._handle_module_results(data)
                 
             elif event_type == 'scan_completed':
-                self.add_to_log("✅ Scan completed")
-                self.is_scanning = False
-                dpg.show_item("quick_scan_button")
-                dpg.hide_item("quick_stop_button")
-                dpg.show_item("adv_scan_button")
-                dpg.hide_item("adv_stop_button")
+                self._handle_scan_completed()
                 
             elif event_type == 'vulnerability_found':
-                self.add_to_log(f"🔴 Vulnerability found: {data}")
-                
-                # Обновляем счетчик уязвимостей
-                current_vulns = int(dpg.get_value("stat_vulns").split(": ")[1])
-                dpg.set_value("stat_vulns", f"Vulnerabilities: {current_vulns + 1}")
+                self._handle_vulnerability_found(data)
                 
             elif event_type == 'exploitation_success':
-                self.add_to_log(f"💥 Exploitation successful: {data}")
-                
-                # Обновляем счетчик успешных атак
-                current_exploits = int(dpg.get_value("stat_exploits").split(": ")[1])
-                dpg.set_value("stat_exploits", f"Exploits: {current_exploits + 1}")
+                self._handle_exploitation_success(data)
                 
             elif event_type == 'lateral_movement':
-                self.add_to_log(f"🔄 Lateral movement: {data}")
+                self._handle_lateral_movement(data)
                 
-                # Обновляем счетчик перемещений
-                current_lateral = int(dpg.get_value("stat_lateral").split(": ")[1])
-                dpg.set_value("stat_lateral", f"Lateral Moves: {current_lateral + 1}")
+            elif event_type == 'profile_changed':
+                self._handle_profile_changed(data)
                 
             # Принудительно обновляем интерфейс после события
             self.update_graph()
             self._update_targets_list()
             self._update_nodes_tree()
+            self._update_statistics()
                 
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
     
-    def _process_discovered_node(self, node_data):
+    def _handle_node_added(self, node):
+        """Обработка добавления узла"""
+        try:
+            if hasattr(node, 'node_id'):
+                node_data = self._convert_scan_node_to_dict(node)
+                self.add_to_log(f"🎯 Target added: {node_data.get('data', 'Unknown')}")
+                self._add_node_to_graph(node.node_id, node_data)
+        except Exception as e:
+            self.logger.error(f"Error handling node added: {e}")
+    
+    def _handle_node_discovered(self, node):
         """Обработка обнаруженного узла"""
         try:
-            if isinstance(node_data, dict):
-                # Добавляем узел в граф
-                node_id = self.graph.add_node(node_data)
-                
-                # Обновляем статистику
-                current_nodes = int(dpg.get_value("stat_nodes").split(": ")[1])
-                dpg.set_value("stat_nodes", f"Nodes: {current_nodes + 1}")
-                
-                self.logger.info(f"Added node to graph: {node_data}")
-                
+            if hasattr(node, 'node_id'):
+                node_data = self._convert_scan_node_to_dict(node)
+                self.add_to_log(f"🔍 Node discovered: {node_data.get('data', 'Unknown')} - {node_data.get('type', 'unknown')}")
+                self._add_node_to_graph(node.node_id, node_data)
         except Exception as e:
-            self.logger.error(f"Error processing discovered node: {e}")
+            self.logger.error(f"Error handling node discovered: {e}")
     
-    def _process_module_results(self, results):
+    def _handle_module_results(self, results):
         """Обработка результатов модуля"""
         try:
-            if 'nodes' in results:
-                for node_data in results['nodes']:
-                    self._process_discovered_node(node_data)
-                    
-            if 'edges' in results:
-                for edge_data in results['edges']:
-                    if 'source' in edge_data and 'target' in edge_data:
-                        self.graph.add_edge(
-                            edge_data['source'], 
-                            edge_data['target'], 
-                            edge_data.get('type', 'normal')
-                        )
-                        
+            self.add_to_log(f"⚙️ Module results received from {results.get('module', 'unknown')}")
+            
+            # Обрабатываем задачу если она есть
+            task = results.get('task')
+            if task and hasattr(task, 'node_id'):
+                task_data = self._convert_scan_node_to_dict(task)
+                self._add_node_to_graph(task.node_id, task_data)
+            
+            # Обрабатываем результаты сканирования портов
+            if 'open_ports' in results:
+                for ip, ports in results['open_ports'].items():
+                    if ports:  # Если есть открытые порты
+                        port_node_data = {
+                            'type': 'open_ports',
+                            'data': f"{ip} ports",
+                            'ports': ports,
+                            'ip': ip
+                        }
+                        port_node_id = self.graph.add_node(port_node_data)
+                        self._add_edge_to_host(ip, port_node_id, 'port')
+            
         except Exception as e:
-            self.logger.error(f"Error processing module results: {e}")
+            self.logger.error(f"Error handling module results: {e}")
+    
+    def _handle_scan_completed(self):
+        """Обработка завершения сканирования"""
+        self.add_to_log("✅ Scan completed")
+        self.is_scanning = False
+        dpg.show_item("quick_scan_button")
+        dpg.hide_item("quick_stop_button")
+        dpg.show_item("adv_scan_button")
+        dpg.hide_item("adv_stop_button")
+    
+    def _handle_vulnerability_found(self, data):
+        """Обработка найденной уязвимости"""
+        self.add_to_log(f"🔴 Vulnerability found: {data}")
+        current_vulns = int(dpg.get_value("stat_vulns").split(": ")[1])
+        dpg.set_value("stat_vulns", f"Vulnerabilities: {current_vulns + 1}")
+    
+    def _handle_exploitation_success(self, data):
+        """Обработка успешной эксплуатации"""
+        self.add_to_log(f"💥 Exploitation successful: {data}")
+        current_exploits = int(dpg.get_value("stat_exploits").split(": ")[1])
+        dpg.set_value("stat_exploits", f"Exploits: {current_exploits + 1}")
+    
+    def _handle_lateral_movement(self, data):
+        """Обработка перемещения внутри сети"""
+        self.add_to_log(f"🔄 Lateral movement: {data}")
+        current_lateral = int(dpg.get_value("stat_lateral").split(": ")[1])
+        dpg.set_value("stat_lateral", f"Lateral Moves: {current_lateral + 1}")
+    
+    def _handle_profile_changed(self, profile):
+        """Обработка изменения профиля"""
+        self.add_to_log(f"📋 Profile changed to: {profile}")
+    
+    def _convert_scan_node_to_dict(self, scan_node) -> Dict[str, Any]:
+        """Конвертировать ScanNode в словарь для графа"""
+        try:
+            node_dict = {
+                'type': getattr(scan_node, 'type', 'unknown').value if hasattr(scan_node, 'type') else 'unknown',
+                'data': getattr(scan_node, 'data', 'Unknown'),
+                'source': getattr(scan_node, 'source', 'unknown'),
+                'depth': getattr(scan_node, 'depth', 0),
+                'timestamp': getattr(scan_node, 'timestamp', 0),
+                'module': getattr(scan_node, 'module', 'unknown'),
+                'metadata': getattr(scan_node, 'metadata', {}),
+                'ports': getattr(scan_node, 'ports', []),
+                'services': getattr(scan_node, 'services', []),
+                'vulnerability_data': getattr(scan_node, 'vulnerability_data', {}),
+                'vulnerabilities': getattr(scan_node, 'vulnerabilities', []),
+                'exploit_data': getattr(scan_node, 'exploit_data', {})
+            }
+            
+            # Определяем тип узла для визуализации
+            if node_dict['type'] == 'initial_target':
+                node_dict['type'] = 'initial_target'
+            elif node_dict['type'] == 'subdomain':
+                node_dict['type'] = 'subdomain'
+            elif node_dict['type'] == 'active_host':
+                node_dict['type'] = 'active_host'
+            elif 'port' in node_dict['module']:
+                node_dict['type'] = 'open_ports'
+            elif 'vulnerability' in node_dict['module']:
+                node_dict['type'] = 'vulnerability'
+            elif 'exploit' in node_dict['module']:
+                node_dict['type'] = 'exploitation'
+                
+            return node_dict
+        except Exception as e:
+            self.logger.error(f"Error converting scan node: {e}")
+            return {'type': 'unknown', 'data': 'Conversion error'}
+    
+    def _add_node_to_graph(self, engine_node_id: str, node_data: Dict[str, Any]):
+        """Добавить узел в граф"""
+        try:
+            # Проверяем, не добавлен ли уже узел
+            if engine_node_id in self.node_id_map:
+                return self.node_id_map[engine_node_id]
+            
+            # Добавляем узел в граф
+            graph_node_id = self.graph.add_node(node_data)
+            if graph_node_id != -1:
+                self.node_id_map[engine_node_id] = graph_node_id
+                
+                # Добавляем связи если есть источник
+                source = node_data.get('source')
+                if source and source in self.node_id_map:
+                    source_graph_id = self.node_id_map[source]
+                    edge_type = self._determine_edge_type(node_data)
+                    self.graph.add_edge(source_graph_id, graph_node_id, edge_type)
+                
+                return graph_node_id
+            return -1
+        except Exception as e:
+            self.logger.error(f"Error adding node to graph: {e}")
+            return -1
+    
+    def _add_edge_to_host(self, ip: str, target_node_id: int, edge_type: str):
+        """Добавить связь к хосту по IP"""
+        try:
+            # Ищем узел с соответствующим IP
+            for engine_id, graph_id in self.node_id_map.items():
+                node = self.graph.nodes.get(graph_id)
+                if node and node.get('data') == ip:
+                    self.graph.add_edge(graph_id, target_node_id, edge_type)
+                    break
+        except Exception as e:
+            self.logger.error(f"Error adding edge to host: {e}")
+    
+    def _determine_edge_type(self, node_data: Dict[str, Any]) -> str:
+        """Определить тип связи на основе данных узла"""
+        node_type = node_data.get('type', '')
+        module = node_data.get('module', '')
+        
+        if 'dns' in module or node_type == 'subdomain':
+            return 'dns'
+        elif 'port' in module:
+            return 'port'
+        elif 'vulnerability' in module:
+            return 'vulnerability'
+        elif 'exploit' in module:
+            return 'exploitation'
+        else:
+            return 'normal'
     
     def run(self):
         """Запуск GUI"""
