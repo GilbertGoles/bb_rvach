@@ -40,6 +40,9 @@ class GraphView:
             'service': [148, 0, 211],             # Фиолетовый
             'vulnerability_scan': [255, 100, 100], # Светло-красный
             'domain_scan': [100, 200, 255],       # Голубой
+            'exploitation': [139, 0, 0],          # Темно-красный
+            'exploitation_success': [255, 20, 147], # Ярко-розовый
+            'internal_scan': [0, 206, 209],       # Бирюзовый
             'custom': [169, 169, 169]             # Темно-серый
         }
         
@@ -52,6 +55,23 @@ class GraphView:
             'info': [100, 149, 237],              # Синий
             'unknown': [255, 192, 203]            # Розовый
         }
+    
+    def get_node_color(self, node_type: str, node_data: Dict[str, Any] = None) -> List[float]:
+        """Цвет узла в зависимости от типа и дополнительных атрибутов"""
+        if node_data is None:
+            node_data = {}
+            
+        # Специальная обработка для уязвимостей
+        if node_type == 'vulnerability':
+            severity = node_data.get('metadata', {}).get('severity', 'unknown')
+            return self.get_vulnerability_color(severity)
+        
+        # Обычные узлы
+        return self.colors.get(node_type, self.colors['node_default'])
+    
+    def get_vulnerability_color(self, severity: str) -> List[float]:
+        """Цвет для уязвимости по severity"""
+        return self.vulnerability_colors.get(severity.lower(), self.vulnerability_colors['unknown'])
     
     def setup_graph_tab(self):
         """Настройка вкладки с графом"""
@@ -84,9 +104,41 @@ class GraphView:
                     width=100
                 )
             
+            # Статистика графа
+            with dpg.group(horizontal=True):
+                dpg.add_text("Узлы: 0", tag="node_count")
+                dpg.add_text("Связи: 0", tag="edge_count")
+                dpg.add_text("Уязвимости: 0", tag="vuln_count")
+                dpg.add_text("Успешные атаки: 0", tag="exploit_count")
+            
             # Информация о выбранном узле
             with dpg.collapsing_header(label="📋 Информация о узле", default_open=True):
                 dpg.add_text("Выберите узел для просмотра деталей", tag="node_info")
+            
+            # Легенда цветов
+            with dpg.collapsing_header(label="🎨 Легенда", default_open=False):
+                with dpg.table(header_row=False, policy=dpg.mvTable_SizingStretchProp):
+                    dpg.add_table_column()
+                    dpg.add_table_column()
+                    
+                    # Типы узлов
+                    legend_items = [
+                        ('🎯 Начальная цель', 'initial_target'),
+                        ('🌐 Поддомен', 'subdomain'),
+                        ('💻 Активный хост', 'active_host'),
+                        ('🔓 Открытые порты', 'open_ports'),
+                        ('⚙️ Сервис', 'service'),
+                        ('🔴 Уязвимость', 'vulnerability'),
+                        ('💥 Эксплуатация', 'exploitation'),
+                        ('💀 Успешная атака', 'exploitation_success'),
+                        ('🔍 Внутреннее сканирование', 'internal_scan')
+                    ]
+                    
+                    for label, node_type in legend_items:
+                        with dpg.table_row():
+                            color = self.get_node_color(node_type)
+                            dpg.add_color_button(color, width=20, height=20)
+                            dpg.add_text(label)
             
             # Область для графа с возможностью панорамирования и масштабирования
             with dpg.child_window(
@@ -130,22 +182,10 @@ class GraphView:
             'position': self.generate_node_position(node_id)
         }
         
+        # Обновляем статистику
+        self.update_statistics()
+        
         return node_id
-    
-    def get_node_color(self, node_type: str, node_data: Dict[str, Any]) -> List[float]:
-        """Цвет узла в зависимости от типа и дополнительных атрибутов"""
-        
-        # Специальная обработка для уязвимостей
-        if node_type == 'vulnerability':
-            severity = node_data.get('metadata', {}).get('severity', 'unknown')
-            return self.get_vulnerability_color(severity)
-        
-        # Обычные узлы
-        return self.colors.get(node_type, self.colors['node_default'])
-    
-    def get_vulnerability_color(self, severity: str) -> List[float]:
-        """Цвет для уязвимости по severity"""
-        return self.vulnerability_colors.get(severity.lower(), self.vulnerability_colors['unknown'])
     
     def get_node_size(self, node_type: str) -> float:
         """Размер узла в зависимости от типа"""
@@ -156,6 +196,9 @@ class GraphView:
             'active_host': 22.0,
             'subdomain': 20.0,
             'open_ports': 19.0,
+            'exploitation': 21.0,
+            'exploitation_success': 26.0,  # Крупнее для важных узлов
+            'internal_scan': 23.0,
             'default': 20.0
         }
         return sizes.get(node_type, sizes['default'])
@@ -166,10 +209,24 @@ class GraphView:
             # Первый узел в центре
             return [400, 250]
         
-        # Распределяем узлы по кругу
+        # Распределяем узлы по кругу с группировкой по типам
         total_nodes = len(self.nodes)
+        
+        # Для узлов эксплуатации размещаем ближе к центру
+        if any(node['type'] in ['exploitation', 'exploitation_success'] for node in self.nodes.values()):
+            # Если есть узлы атак, размещаем новые узлы вокруг них
+            exploit_nodes = [node for node in self.nodes.values() if node['type'] in ['exploitation', 'exploitation_success']]
+            if exploit_nodes:
+                center_node = exploit_nodes[0]
+                angle = (node_id * 2 * math.pi / max(total_nodes, 1)) + random.uniform(-0.2, 0.2)
+                radius = 100 + (total_nodes * 3)
+                x = center_node['position'][0] + radius * math.cos(angle)
+                y = center_node['position'][1] + radius * math.sin(angle)
+                return [x, y]
+        
+        # Стандартное распределение по кругу
         angle = (node_id * 2 * math.pi / max(total_nodes, 1)) + random.uniform(-0.1, 0.1)
-        radius = 150 + (total_nodes * 5)  # Увеличиваем радиус с ростом количества узлов
+        radius = 150 + (total_nodes * 5)
         
         center_x, center_y = 400, 250
         x = center_x + radius * math.cos(angle)
@@ -180,11 +237,45 @@ class GraphView:
     def add_edge(self, source_id: int, target_id: int):
         """Добавить связь между узлами"""
         if source_id in self.nodes and target_id in self.nodes:
+            # Определяем цвет связи в зависимости от типов узлов
+            source_node = self.nodes[source_id]
+            target_node = self.nodes[target_id]
+            
+            edge_color = self.get_edge_color(source_node, target_node)
+            
             self.edges.append({
                 'source': source_id,
                 'target': target_id,
-                'color': [150, 150, 150, 100]  # Полупрозрачный серый
+                'color': edge_color
             })
+            
+            # Обновляем статистику
+            self.update_statistics()
+    
+    def get_edge_color(self, source_node: Dict, target_node: Dict) -> List[float]:
+        """Цвет связи в зависимости от типов узлов"""
+        # Связи с узлами эксплуатации выделяем
+        if (source_node['type'] in ['exploitation', 'exploitation_success'] or 
+            target_node['type'] in ['exploitation', 'exploitation_success']):
+            return [255, 0, 0, 150]  # Красный для атак
+        
+        # Связи с уязвимостями
+        if (source_node['type'] == 'vulnerability' or 
+            target_node['type'] == 'vulnerability'):
+            return [255, 100, 100, 120]  # Светло-красный
+        
+        # Обычные связи
+        return [150, 150, 150, 100]  # Полупрозрачный серый
+    
+    def update_statistics(self):
+        """Обновить статистику графа"""
+        vuln_count = sum(1 for node in self.nodes.values() if node['type'] == 'vulnerability')
+        exploit_count = sum(1 for node in self.nodes.values() if node['type'] == 'exploitation_success')
+        
+        dpg.set_value("node_count", f"Узлы: {len(self.nodes)}")
+        dpg.set_value("edge_count", f"Связи: {len(self.edges)}")
+        dpg.set_value("vuln_count", f"Уязвимости: {vuln_count}")
+        dpg.set_value("exploit_count", f"Успешные атаки: {exploit_count}")
     
     def update_graph(self):
         """Обновить отображение графа"""
@@ -249,11 +340,17 @@ class GraphView:
                 source_pos = self.apply_transform(source_node['position'])
                 target_pos = self.apply_transform(target_node['position'])
                 
+                # Толщина связи зависит от типов узлов
+                thickness = 2
+                if (source_node['type'] in ['exploitation', 'exploitation_success'] or 
+                    target_node['type'] in ['exploitation', 'exploitation_success']):
+                    thickness = 4  # Толще для атакующих связей
+                
                 dpg.draw_line(
                     source_pos,
                     target_pos,
                     color=edge['color'],
-                    thickness=2 * self.graph_scale,
+                    thickness=thickness * self.graph_scale,
                     parent="graph_canvas"
                 )
     
@@ -269,10 +366,20 @@ class GraphView:
                 position,
                 size,
                 fill=color,
-                color=[255, 255, 255, 100],
+                color=[255, 255, 255, 150],
                 thickness=2,
                 parent="graph_canvas"
             )
+            
+            # Для узлов успешной эксплуатации добавляем эффект "пульсации"
+            if node['type'] == 'exploitation_success':
+                dpg.draw_circle(
+                    position,
+                    size + 5 * self.graph_scale,
+                    color=[255, 20, 147, 100],
+                    thickness=2,
+                    parent="graph_canvas"
+                )
             
             # Рисуем текст метки (упрощенный)
             if self.graph_scale > 0.5:  # Показываем текст только при достаточном масштабе
@@ -312,7 +419,10 @@ class GraphView:
             'open_ports': '🔓',
             'service': '⚙️',
             'vulnerability': '🔴',
-            'vulnerability_scan': '🔍'
+            'vulnerability_scan': '🔍',
+            'exploitation': '💥',
+            'exploitation_success': '💀',
+            'internal_scan': '🔍'
         }
         
         icon = icons.get(node_type, '●')
@@ -394,6 +504,18 @@ class GraphView:
             info += f"\nCVE: {vuln_data.get('cve', 'N/A')}"
             info += f"\nОписание: {vuln_data.get('description', 'N/A')}"
         
+        elif node['type'] in ['exploitation', 'exploitation_success']:
+            exploit_data = node['data'].get('exploit_data', {})
+            if exploit_data:
+                info += f"\nТип доступа: {exploit_data.get('access_type', 'N/A')}"
+                info += f"\nУспех: {exploit_data.get('success', False)}"
+                if exploit_data.get('credentials'):
+                    info += f"\nУчетные данные: {exploit_data.get('credentials')}"
+        
+        elif node['type'] == 'internal_scan':
+            info += "\n💀 ВНУТРЕННЕЕ СКАНИРОВАНИЕ"
+            info += "\n(доступ получен через эксплуатацию)"
+        
         return info
     
     def clear_graph_display(self):
@@ -412,6 +534,7 @@ class GraphView:
         dpg.set_value("graph_scale_slider", 1.0)
         self.clear_graph_display()
         self.update_node_info()
+        self.update_statistics()
     
     def export_graph(self):
         """Экспорт графа в файл"""
@@ -424,7 +547,9 @@ class GraphView:
             'edges': self.edges,
             'metadata': {
                 'total_nodes': len(self.nodes),
-                'total_edges': len(self.edges)
+                'total_edges': len(self.edges),
+                'vulnerabilities': sum(1 for node in self.nodes.values() if node['type'] == 'vulnerability'),
+                'successful_exploits': sum(1 for node in self.nodes.values() if node['type'] == 'exploitation_success')
             }
         }
         
@@ -434,7 +559,7 @@ class GraphView:
         
         return filename
 
-# Пример использования
+# Пример использования с тестовыми данными для демонстрации
 if __name__ == "__main__":
     dpg.create_context()
     
@@ -442,15 +567,23 @@ if __name__ == "__main__":
         graph = GraphView()
         graph.setup_graph_tab()
         
-        # Тестовые данные
+        # Тестовые данные с поддержкой эксплуатации
         test_nodes = [
             {'type': 'initial_target', 'data': 'example.com', 'depth': 0},
             {'type': 'subdomain', 'data': 'api.example.com', 'depth': 1},
             {'type': 'active_host', 'data': '192.168.1.1', 'depth': 2},
-            {'type': 'open_ports', 'data': '192.168.1.1', 'depth': 3, 'ports': [80, 443]},
-            {'type': 'service', 'data': 'HTTP Service', 'depth': 4},
+            {'type': 'open_ports', 'data': '192.168.1.1', 'depth': 3, 'ports': [80, 443, 22]},
+            {'type': 'service', 'data': 'SSH Service', 'depth': 4},
             {'type': 'vulnerability', 'data': 'CVE-2023-1234', 'depth': 5, 
-             'metadata': {'severity': 'high'}}
+             'metadata': {'severity': 'high'},
+             'vulnerability_data': {'severity': 'high', 'cve': 'CVE-2023-1234', 'description': 'Weak SSH password'}},
+            {'type': 'exploitation', 'data': 'SSH Bruteforce', 'depth': 6,
+             'metadata': {'vulnerability_count': 1}},
+            {'type': 'exploitation_success', 'data': 'SSH Access Obtained', 'depth': 7,
+             'exploit_data': {'success': True, 'access_type': 'ssh_access', 
+                            'credentials': {'username': 'admin', 'password': 'admin123'}}},
+            {'type': 'internal_scan', 'data': 'Internal Network Scan', 'depth': 8,
+             'metadata': {'lateral_movement': True}}
         ]
         
         # Добавляем узлы и связи
