@@ -44,7 +44,7 @@ class ScanNode:
 class PropagationEngine:
     """Движок авто-распространения сканирования"""
     
-    def __init__(self, max_depth: int = 10, max_concurrent_tasks: int = 5, rate_limit: int = 10):
+    def __init__(self, max_depth: int = 10, max_concurrent_tasks: int = 5, rate_limit: int = 10, update_callback: Optional[Callable] = None):
         self.discovered_nodes: List[ScanNode] = []
         self.pending_scans = Queue()
         self.completed_scans: Dict[str, Dict] = {}
@@ -54,6 +54,8 @@ class PropagationEngine:
         self.max_concurrent_tasks = max_concurrent_tasks
         self.rate_limit = rate_limit
         self.is_running = False
+        self.update_callback = update_callback  # Callback для обновления GUI
+        
         self.stats = {
             'total_scans': 0,
             'successful_scans': 0,
@@ -85,6 +87,9 @@ class PropagationEngine:
         self.discovered_nodes.append(initial_node)
         self.pending_scans.put(initial_node)
         self.stats['nodes_discovered'] += 1
+        
+        # Уведомляем GUI о новом узле
+        self._notify_gui_update('node_added', initial_node)
     
     def add_custom_node(self, node_type: NodeType, data: Any, source: str, depth: int, 
                        module: str = "default", metadata: Dict = None, ports: List[int] = None):
@@ -104,11 +109,17 @@ class PropagationEngine:
         self.pending_scans.put(node)
         self.stats['nodes_discovered'] += 1
         self.logger.info(f"Добавлен кастомный узел: {node_type.value} -> {data} (модуль: {module})")
+        
+        # Уведомляем GUI о новом узле
+        self._notify_gui_update('node_added', node)
     
     def register_module(self, module_name: str, module_class):
         """Регистрация модуля в системе"""
         self.active_modules[module_name] = module_class(self.rate_limit)
         self.logger.info(f"Модуль зарегистрирован: {module_name}")
+        
+        # Уведомляем GUI о новом модуле
+        self._notify_gui_update('module_registered', module_name)
     
     def register_callback(self, event_type: str, callback: Callable):
         """Регистрация callback-функций для событий"""
@@ -117,10 +128,21 @@ class PropagationEngine:
         self.callbacks[event_type] = callback
         self.logger.info(f"Callback зарегистрирован для события: {event_type}")
     
+    def _notify_gui_update(self, event_type: str, data: Any = None):
+        """Уведомление GUI об обновлении"""
+        if self.update_callback:
+            try:
+                self.update_callback(event_type, data)
+            except Exception as e:
+                self.logger.warning(f"Ошибка при вызове GUI callback: {e}")
+    
     async def process_queue(self):
         """Асинхронная обработка очереди задач"""
         self.is_running = True
         self.logger.info("Запуск обработки очереди задач...")
+        
+        # Уведомляем GUI о начале сканирования
+        self._notify_gui_update('scan_started')
         
         semaphore = asyncio.Semaphore(self.max_concurrent_tasks)
         
@@ -140,14 +162,27 @@ class PropagationEngine:
             # Запускаем задачи конкурентно
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Уведомляем GUI о прогрессе
+            self._notify_gui_update('progress_update', {
+                'pending_tasks': self.pending_scans.qsize(),
+                'completed_tasks': len(self.completed_scans),
+                'discovered_nodes': len(self.discovered_nodes)
+            })
         
         self.logger.info("Обработка очереди завершена")
         self.is_running = False
+        
+        # Уведомляем GUI о завершении сканирования
+        self._notify_gui_update('scan_completed')
     
     async def execute_task(self, task: ScanNode):
         """Выполнение одной задачи сканирования"""
         self.logger.info(f"Выполняется задача: {task.module} -> {task.data} (глубина: {task.depth})")
         self.stats['total_scans'] += 1
+        
+        # Уведомляем GUI о начале задачи
+        self._notify_gui_update('task_started', task)
         
         try:
             # Логика выбора и выполнения модуля
@@ -172,6 +207,9 @@ class PropagationEngine:
                 'module': task.module
             }
             
+            # Уведомляем GUI о завершении задачи
+            self._notify_gui_update('task_completed', task)
+            
             # Вызов callback при успешном выполнении
             if hasattr(self, 'callbacks') and 'scan_completed' in self.callbacks:
                 self.callbacks['scan_completed'](task)
@@ -185,6 +223,13 @@ class PropagationEngine:
                 'timestamp': time.time(),
                 'module': task.module
             }
+            
+            # Уведомляем GUI об ошибке
+            self._notify_gui_update('task_failed', {
+                'task': task,
+                'error': 'timeout'
+            })
+            
         except Exception as e:
             self.logger.error(f"Ошибка выполнения задачи {task.data}: {e}")
             self.stats['failed_scans'] += 1
@@ -194,6 +239,12 @@ class PropagationEngine:
                 'timestamp': time.time(),
                 'module': task.module
             }
+            
+            # Уведомляем GUI об ошибке
+            self._notify_gui_update('task_failed', {
+                'task': task,
+                'error': str(e)
+            })
     
     async def run_module(self, module, task: ScanNode):
         """Запуск модуля сканирования"""
@@ -215,7 +266,7 @@ class PropagationEngine:
                     node_id=f"active_host_{host['ip']}_{int(time.time())}",
                     type=NodeType.ACTIVE_HOST,
                     data=host["ip"],
-                    source=source_task.data,
+                    source=source_task.node_id,  # Используем node_id для точной связи
                     depth=source_task.depth + 1,
                     timestamp=time.time(),
                     module='port_scanner',
@@ -231,7 +282,7 @@ class PropagationEngine:
                         node_id=f"open_ports_{host}_{int(time.time())}",
                         type=NodeType.OPEN_PORTS,
                         data=host,
-                        source=source_task.data,
+                        source=source_task.node_id,
                         depth=source_task.depth + 1,
                         timestamp=time.time(),
                         module='service_detector',
@@ -247,7 +298,7 @@ class PropagationEngine:
                     node_id=f"service_{service_info['port']}_{service_info['type']}_{int(time.time())}",
                     type=NodeType.SERVICE,
                     data=f"{service_info['host']}:{service_info['port']}",
-                    source=source_task.data,
+                    source=source_task.node_id,
                     depth=source_task.depth + 1,
                     timestamp=time.time(),
                     module='vulnerability_scanner',
@@ -263,6 +314,12 @@ class PropagationEngine:
         else:
             new_nodes = self.simulate_findings(source_task)
             await self.process_findings(new_nodes, source_task)
+        
+        # Уведомляем GUI о результатах модуля
+        self._notify_gui_update('module_results', {
+            'task': source_task,
+            'results': results
+        })
     
     async def add_discovered_node(self, node: ScanNode):
         """Добавление обнаруженного узла в систему"""
@@ -272,6 +329,9 @@ class PropagationEngine:
             self.stats['nodes_discovered'] += 1
             
             self.logger.info(f"Обнаружен новый узел: {node.type.value} -> {node.data}")
+            
+            # Уведомляем GUI о новом узле
+            self._notify_gui_update('node_discovered', node)
             
             # Вызов callback при обнаружении нового узла
             if hasattr(self, 'callbacks') and 'node_discovered' in self.callbacks:
@@ -318,7 +378,7 @@ class PropagationEngine:
                     node_id=f"subdomain_{sd}_{task.data}_{int(time.time())}",
                     type=NodeType.SUBDOMAIN,
                     data=f'{sd}.{task.data}',
-                    source=task.data,
+                    source=task.node_id,  # Используем node_id для точной связи
                     depth=task.depth + 1,
                     timestamp=time.time(),
                     module='subdomain_scanner',
@@ -332,7 +392,7 @@ class PropagationEngine:
                     node_id=f"ip_{task.data.replace('.', '_')}_{int(time.time())}",
                     type=NodeType.IP_ADDRESS,
                     data=f'192.168.1.{random.randint(1, 254)}',
-                    source=task.data,
+                    source=task.node_id,
                     depth=task.depth + 1,
                     timestamp=time.time(),
                     module='ping_scanner',
@@ -347,7 +407,7 @@ class PropagationEngine:
                     node_id=f"ports_{task.data}_{int(time.time())}",
                     type=NodeType.OPEN_PORTS,
                     data=task.data,
-                    source=task.data,
+                    source=task.node_id,
                     depth=task.depth + 1,
                     timestamp=time.time(),
                     module='service_detector',
@@ -394,16 +454,32 @@ class PropagationEngine:
             json.dump(results, f, indent=2, ensure_ascii=False)
         
         self.logger.info(f"Результаты экспортированы в: {filename}")
+        
+        # Уведомляем GUI об экспорте
+        self._notify_gui_update('results_exported', filename)
     
     def stop_engine(self):
         """Остановка движка"""
         self.is_running = False
         self.logger.info("Движок сканирования остановлен")
+        
+        # Уведомляем GUI об остановке
+        self._notify_gui_update('engine_stopped')
+
+# Пример использования с GUI callback
+def gui_update_callback(event_type: str, data: Any = None):
+    """Пример callback функции для обновления GUI"""
+    print(f"GUI Update - Event: {event_type}, Data: {data}")
 
 # Пример использования
 async def main():
     """Демонстрация работы движка"""
-    engine = PropagationEngine(max_depth=3, max_concurrent_tasks=3, rate_limit=10)
+    engine = PropagationEngine(
+        max_depth=3, 
+        max_concurrent_tasks=3, 
+        rate_limit=10,
+        update_callback=gui_update_callback
+    )
     
     # Добавляем начальные цели
     engine.add_initial_target("example.com")
