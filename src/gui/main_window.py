@@ -1,5 +1,5 @@
 """
-Главное окно RapidRecon в стиле Obsidian - ИСПРАВЛЕННАЯ ВЕРСИЯ с таблицей хостов
+Главное окно RapidRecon в стиле Obsidian - ИСПРАВЛЕННАЯ ВЕРСИЯ с паузой
 """
 import dearpygui.dearpygui as dpg
 from typing import Dict, Any, List, Optional, Tuple
@@ -91,6 +91,19 @@ class DangerTheme:
                 dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, [255, 40, 40, 255])
                 dpg.add_theme_color(dpg.mvThemeCol_Text, [255, 255, 255])
         return danger_theme
+
+class WarningTheme:
+    """Тема для предупреждающих кнопок (желтая)"""
+    
+    @staticmethod
+    def setup_theme():
+        with dpg.theme() as warning_theme:
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, [255, 179, 64, 200])
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, [255, 199, 84, 255])
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, [255, 159, 44, 255])
+                dpg.add_theme_color(dpg.mvThemeCol_Text, [255, 255, 255])
+        return warning_theme
 
 class GraphVisualization:
     """Визуализация графа в стиле Obsidian"""
@@ -443,13 +456,15 @@ class MainWindow:
         self.graph = GraphVisualization()
         self.host_manager = HostManager()
         self.is_scanning = False
+        self.is_paused = False
         self.logger = logging.getLogger('RapidRecon.GUI')
         self.settings_window_open = False
         self.selected_targets = set()
         self.last_update_time = 0
-        self.update_interval = 1.0
+        self.update_interval = 2.0  # Увеличили интервал обновления
         self.discovered_nodes = {}
         self.node_id_map = {}
+        self.nodes_tree_initialized = False
         
         # Инициализация GUI
         self.initialize_gui()
@@ -467,6 +482,7 @@ class MainWindow:
             # Создание тем
             self.obsidian_theme = ObsidianTheme.setup_theme()
             self.danger_theme = DangerTheme.setup_theme()
+            self.warning_theme = WarningTheme.setup_theme()
             
             # Создание viewport
             dpg.create_viewport(
@@ -546,6 +562,20 @@ class MainWindow:
                 tag="quick_scan_button",
                 width=-1,
                 callback=self.quick_start_scan
+            )
+            dpg.add_button(
+                label="⏸️ Pause Scan", 
+                tag="quick_pause_button",
+                width=-1,
+                callback=self.pause_scan,
+                show=False
+            )
+            dpg.add_button(
+                label="▶️ Resume Scan", 
+                tag="quick_resume_button",
+                width=-1,
+                callback=self.resume_scan,
+                show=False
             )
             dpg.add_button(
                 label="⏹️ Stop All Scans", 
@@ -643,6 +673,18 @@ class MainWindow:
                     callback=self.start_scan
                 )
                 dpg.add_button(
+                    label="⏸️ Pause Scan", 
+                    tag="adv_pause_button",
+                    callback=self.pause_scan,
+                    show=False
+                )
+                dpg.add_button(
+                    label="▶️ Resume Scan", 
+                    tag="adv_resume_button",
+                    callback=self.resume_scan,
+                    show=False
+                )
+                dpg.add_button(
                     label="⏹️ Stop Scan", 
                     tag="adv_stop_button",
                     callback=self.stop_scan,
@@ -717,7 +759,7 @@ class MainWindow:
                     hideable=True,
                     sortable=True,
                     context_menu_in_body=True,
-                    height=400
+                    height=300
                 ):
                     # Заголовки таблицы
                     headers = ["IP Address", "Hostname", "Ports", "OS", "Status", "Vulns", "Last Seen"]
@@ -726,7 +768,8 @@ class MainWindow:
                 
                 # Дерево инфраструктуры
                 dpg.add_text("Network Infrastructure")
-                dpg.add_tree_node(tag="nodes_tree", label="Network Topology (0 nodes)", default_open=True)
+                with dpg.child_window(height=300, border=True):
+                    dpg.add_tree_node(tag="nodes_tree", label="Network Topology (0 nodes)", default_open=True)
             
             # Правая панель - детальная информация
             with dpg.child_window():
@@ -815,9 +858,14 @@ class MainWindow:
             if hasattr(self.engine, 'start_scan'):
                 if self.engine.start_scan():
                     self.is_scanning = True
+                    self.is_paused = False
                     dpg.hide_item("quick_scan_button")
+                    dpg.show_item("quick_pause_button")
+                    dpg.hide_item("quick_resume_button")
                     dpg.show_item("quick_stop_button")
                     dpg.hide_item("adv_scan_button")
+                    dpg.show_item("adv_pause_button")
+                    dpg.hide_item("adv_resume_button")
                     dpg.show_item("adv_stop_button")
                     self.add_to_log("✅ Scan started successfully!")
                     self._start_ui_updates()
@@ -826,17 +874,58 @@ class MainWindow:
             self.logger.error(f"Error in quick_start_scan: {e}")
             self.add_to_log(f"❌ Error starting scan: {e}")
     
+    def pause_scan(self):
+        """Постановка сканирования на паузу"""
+        try:
+            if self.is_scanning and not self.is_paused:
+                self.is_paused = True
+                dpg.hide_item("quick_pause_button")
+                dpg.show_item("quick_resume_button")
+                dpg.hide_item("adv_pause_button")
+                dpg.show_item("adv_resume_button")
+                self.add_to_log("⏸️ Scan paused")
+                
+                # Обновляем дерево при паузе
+                self._update_nodes_tree_safe()
+                
+        except Exception as e:
+            self.logger.error(f"Error pausing scan: {e}")
+            self.add_to_log(f"❌ Error pausing scan: {e}")
+    
+    def resume_scan(self):
+        """Возобновление сканирования"""
+        try:
+            if self.is_scanning and self.is_paused:
+                self.is_paused = False
+                dpg.hide_item("quick_resume_button")
+                dpg.show_item("quick_pause_button")
+                dpg.hide_item("adv_resume_button")
+                dpg.show_item("adv_pause_button")
+                self.add_to_log("▶️ Scan resumed")
+        except Exception as e:
+            self.logger.error(f"Error resuming scan: {e}")
+            self.add_to_log(f"❌ Error resuming scan: {e}")
+    
     def stop_scan(self):
         """Остановка сканирования"""
         try:
             if self.is_scanning and hasattr(self.engine, 'stop_scan'):
                 self.engine.stop_scan()
                 self.is_scanning = False
+                self.is_paused = False
                 dpg.show_item("quick_scan_button")
+                dpg.hide_item("quick_pause_button")
+                dpg.hide_item("quick_resume_button")
                 dpg.hide_item("quick_stop_button")
                 dpg.show_item("adv_scan_button")
+                dpg.hide_item("adv_pause_button")
+                dpg.hide_item("adv_resume_button")
                 dpg.hide_item("adv_stop_button")
                 self.add_to_log("⏹️ Scan stopped by user")
+                
+                # Обновляем дерево при остановке
+                self._update_nodes_tree_safe()
+                
         except Exception as e:
             self.logger.error(f"Error stopping scan: {e}")
             self.add_to_log(f"❌ Error stopping scan: {e}")
@@ -859,9 +948,14 @@ class MainWindow:
             if hasattr(self.engine, 'start_scan'):
                 if self.engine.start_scan():
                     self.is_scanning = True
+                    self.is_paused = False
                     dpg.hide_item("quick_scan_button")
+                    dpg.show_item("quick_pause_button")
+                    dpg.hide_item("quick_resume_button")
                     dpg.show_item("quick_stop_button")
                     dpg.hide_item("adv_scan_button")
+                    dpg.show_item("adv_pause_button")
+                    dpg.hide_item("adv_resume_button")
                     dpg.show_item("adv_stop_button")
                     self.add_to_log("✅ Advanced scan started successfully!")
                     self._start_ui_updates()
@@ -891,8 +985,10 @@ class MainWindow:
             # Обновляем интерфейс после каждого события
             self.update_graph()
             self._update_statistics()
-            self._update_nodes_tree()
-            self._update_hosts_table()
+            
+            # Обновляем дерево только при паузе или остановке
+            if self.is_paused or not self.is_scanning:
+                self._update_nodes_tree_safe()
                 
         except Exception as e:
             self.logger.error(f"Error handling engine event: {e}")
@@ -1059,10 +1155,18 @@ class MainWindow:
         """Обработка завершения сканирования"""
         self.add_to_log("✅ Scan completed")
         self.is_scanning = False
+        self.is_paused = False
         dpg.show_item("quick_scan_button")
+        dpg.hide_item("quick_pause_button")
+        dpg.hide_item("quick_resume_button")
         dpg.hide_item("quick_stop_button")
         dpg.show_item("adv_scan_button")
+        dpg.hide_item("adv_pause_button")
+        dpg.hide_item("adv_resume_button")
         dpg.hide_item("adv_stop_button")
+        
+        # Обновляем дерево при завершении
+        self._update_nodes_tree_safe()
     
     def _handle_vulnerability_found(self, data):
         """Обработка найденной уязвимости"""
@@ -1101,8 +1205,8 @@ class MainWindow:
         except Exception as e:
             self.logger.error(f"Error updating statistics: {e}")
     
-    def _update_nodes_tree(self):
-        """Обновление дерева узлов"""
+    def _update_nodes_tree_safe(self):
+        """Безопасное обновление дерева узлов с обработкой ошибок"""
         try:
             if not dpg.does_item_exist("nodes_tree"):
                 return
@@ -1111,7 +1215,7 @@ class MainWindow:
             dpg.delete_item("nodes_tree", children_only=True)
             
             # Обновляем заголовок
-            dpg.set_value("nodes_tree", f"Network Topology ({len(self.graph.nodes)} nodes)")
+            dpg.configure_item("nodes_tree", label=f"Network Topology ({len(self.graph.nodes)} nodes)")
             
             # Группируем узлы по типам
             nodes_by_type = {}
@@ -1125,16 +1229,17 @@ class MainWindow:
             for node_type, nodes in nodes_by_type.items():
                 with dpg.tree_node(label=f"{node_type.title()} ({len(nodes)})", parent="nodes_tree"):
                     for node in nodes:
-                        node_label = f"{node['label']} ({node['id']})"
+                        node_label = f"{node['label']} (ID: {node['id']})"
                         with dpg.tree_node(label=node_label):
                             # Добавляем кнопку для просмотра деталей
-                            def make_callback(node_id):
-                                return lambda: self._show_node_details(node_id)
-                            
                             dpg.add_button(
                                 label="🔍 View Details", 
-                                callback=make_callback(node['id'])
+                                callback=lambda s, d, node_id=node['id']: self._show_node_details(node_id)
                             )
+                            
+                            # Добавляем базовую информацию
+                            dpg.add_text(f"Type: {node['type']}")
+                            dpg.add_text(f"Data: {node.get('data', 'N/A')}")
                             
         except Exception as e:
             self.logger.error(f"Error updating nodes tree: {e}")
@@ -1196,7 +1301,10 @@ class MainWindow:
                 new_log = new_message
                 
             dpg.set_value("activity_log", new_log)
+            
+            # Автопрокрутка к последнему сообщению
             dpg.focus_item("activity_log")
+            
         except Exception as e:
             self.logger.error(f"Error adding to log: {e}")
     
@@ -1211,8 +1319,14 @@ class MainWindow:
                     try:
                         self._update_statistics()
                         self.update_graph()
-                        self._update_nodes_tree()
+                        
+                        # Обновляем таблицу хостов всегда
                         self._update_hosts_table()
+                        
+                        # Дерево обновляем только при паузе
+                        if self.is_paused:
+                            self._update_nodes_tree_safe()
+                            
                     except Exception as e:
                         self.logger.error(f"Error in UI update: {e}")
         
@@ -1257,7 +1371,7 @@ class MainWindow:
             dpg.set_value("stat_lateral", "Lateral Moves: 0")
             
             self._update_hosts_table()
-            self._update_nodes_tree()
+            self._update_nodes_tree_safe()
             
             self.add_to_log("🧹 All results cleared")
         except Exception as e:
