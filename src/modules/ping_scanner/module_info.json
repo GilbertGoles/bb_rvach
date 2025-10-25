@@ -1,0 +1,9 @@
+{
+    "name": "ping_scanner",
+    "version": "1.0.0",
+    "description": "Пинг-сканер для обнаружения хостов",
+    "author": "RapidRecon Team",
+    "input_types": ["ip_range", "domain"],
+    "output_types": ["active_hosts"],
+    "triggers": ["port_scan"]
+}
