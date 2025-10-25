@@ -772,7 +772,9 @@ class MainWindow:
                     label="💥 Start Exploitation",
                     callback=self.start_exploitation
                 )
-                dpg.bind_item_theme(exploit_button, self.danger_theme)
+                # Применяем красную тему к кнопке эксплуатации
+                if hasattr(self, 'danger_theme'):
+                    dpg.bind_item_theme(exploit_button, self.danger_theme)
                 
                 dpg.add_button(
                     label="🔍 Scan for Exploits",
