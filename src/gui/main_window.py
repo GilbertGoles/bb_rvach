@@ -1,5 +1,5 @@
 """
-Главное окно RapidRecon в стиле Obsidian с полным функционалом - ИСПРАВЛЕННАЯ ВЕРСИЯ
+Главное окно RapidRecon в стиле Obsidian с полным функционалом - СТАБИЛЬНАЯ ВЕРСИЯ
 """
 import dearpygui.dearpygui as dpg
 from typing import Dict, Any, List, Optional
@@ -10,6 +10,11 @@ import logging
 import math
 import random
 import traceback
+import sys
+import os
+
+# Добавляем путь к модулям
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 class ObsidianTheme:
     """Тема в стиле Obsidian"""
@@ -88,7 +93,7 @@ class DangerTheme:
         return danger_theme
 
 class GraphVisualization:
-    """Визуализация графа в стиле Obsidian - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+    """Визуализация графа в стиле Obsidian - СТАБИЛЬНАЯ ВЕРСИЯ"""
     
     def __init__(self):
         self.nodes = {}
@@ -406,7 +411,7 @@ class GraphVisualization:
 
 class MainWindow:
     """
-    Главный интерфейс RapidRecon в стиле Obsidian с полным функционалом - ИСПРАВЛЕННАЯ ВЕРСИЯ
+    Главный интерфейс RapidRecon в стиле Obsidian с полным функционалом - СТАБИЛЬНАЯ ВЕРСИЯ
     """
     
     def __init__(self, engine, module_manager):
@@ -422,25 +427,34 @@ class MainWindow:
         self.discovered_nodes = {}
         self.node_id_map = {}  # Маппинг ID движка на ID графа
         
-        self.logger.info("🎨 Инициализация графического интерфейса...")
-        
-        # Сначала создаем темы
+        # Создаем темы ДО инициализации GUI
         self.obsidian_theme = ObsidianTheme.setup_theme()
         self.danger_theme = DangerTheme.setup_theme()
         
-        # Инициализация GUI
-        self.setup_gui()
+        self.logger.info("🎨 Инициализация графического интерфейса...")
         
-        # Применяем тему
-        dpg.bind_theme(self.obsidian_theme)
+        # Инициализация GUI с обработкой ошибок
+        self.setup_gui()
         
         self.logger.info("✅ Графический интерфейс инициализирован")
     
     def setup_gui(self):
-        """Настройка интерфейса в стиле Obsidian"""
+        """Настройка интерфейса в стиле Obsidian с улучшенной обработкой ошибок"""
         try:
             self.logger.info("🛠️ Создание контекста Dear PyGui...")
-            dpg.create_context()
+            
+            # Создаем контекст
+            if not dpg.is_dearpygui_initialized():
+                dpg.create_context()
+            
+            # Создаем viewport сначала
+            dpg.create_viewport(
+                title='RapidRecon • Advanced Security Scanner',
+                width=1600,
+                height=1000,
+                min_width=1200,
+                min_height=800
+            )
             
             # Главное окно
             with dpg.window(
@@ -477,20 +491,22 @@ class MainWindow:
             # Окно выбора целей
             self._setup_targets_window()
             
-            # Настройка viewport
-            dpg.create_viewport(
-                title='RapidRecon • Advanced Security Scanner',
-                width=1600,
-                height=1000,
-                min_width=1200,
-                min_height=800
-            )
+            # Применяем тему
+            dpg.bind_theme(self.obsidian_theme)
+            
+            # Настраиваем viewport
+            dpg.setup_dearpygui()
+            dpg.show_viewport()
+            dpg.set_primary_window("main_window", True)
             
             self.logger.info("✅ Интерфейс настроен успешно")
             
         except Exception as e:
             self.logger.error(f"❌ Ошибка настройки GUI: {e}")
             self.logger.error(traceback.format_exc())
+            # Показываем сообщение об ошибке в консоли
+            print(f"❌ Ошибка GUI: {e}")
+            print("💡 Попробуйте обновить Dear PyGui: pip install --upgrade dearpygui")
             raise
     
     def _setup_sidebar(self):
@@ -1482,7 +1498,7 @@ class MainWindow:
             self.logger.error(f"Error updating nodes tree: {e}")
     
     def handle_engine_event(self, event_type: str, data: Any = None):
-        """Обработка событий от движка - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+        """Обработка событий от движка - СТАБИЛЬНАЯ ВЕРСИЯ"""
         try:
             self.logger.info(f"GUI received engine event: {event_type}")
             
@@ -1691,9 +1707,6 @@ class MainWindow:
         """Запуск GUI"""
         try:
             self.logger.info("🚀 Запуск графического интерфейса...")
-            dpg.setup_dearpygui()
-            dpg.show_viewport()
-            dpg.set_primary_window("main_window", True)
             
             # Главный цикл GUI
             while dpg.is_dearpygui_running():
@@ -1710,7 +1723,8 @@ class MainWindow:
         """Уничтожение GUI"""
         try:
             self.logger.info("🧹 Очистка графического интерфейса...")
-            dpg.destroy_context()
+            if dpg.is_dearpygui_initialized():
+                dpg.destroy_context()
             self.logger.info("✅ Графический интерфейс уничтожен")
         except Exception as e:
             self.logger.error(f"❌ Ошибка уничтожения GUI: {e}")
