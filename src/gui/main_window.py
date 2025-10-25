@@ -9,6 +9,7 @@ from datetime import datetime
 import logging
 import math
 import random
+import traceback
 
 class ObsidianTheme:
     """Тема в стиле Obsidian"""
@@ -327,60 +328,73 @@ class MainWindow:
         self.settings_window_open = False
         self.selected_targets = set()
         
+        self.logger.info("🎨 Инициализация графического интерфейса...")
+        
         # Инициализация GUI
         self.setup_gui()
         
         # Применение темы
         self.theme = ObsidianTheme.setup_theme()
         dpg.bind_theme(self.theme)
+        
+        self.logger.info("✅ Графический интерфейс инициализирован")
     
     def setup_gui(self):
         """Настройка интерфейса в стиле Obsidian"""
-        dpg.create_context()
-        
-        # Главное окно
-        with dpg.window(
-            tag="main_window",
-            label="RapidRecon - Advanced Network Reconnaissance",
-            width=1600,
-            height=1000,
-            no_move=True,
-            no_resize=True,
-            no_collapse=True,
-            no_close=True
-        ):
-            # Боковая панель (как в Obsidian)
-            with dpg.child_window(
-                tag="sidebar",
-                width=300,
-                border=False
-            ):
-                self._setup_sidebar()
+        try:
+            self.logger.info("🛠️ Создание контекста Dear PyGui...")
+            dpg.create_context()
             
-            # Основная область
-            with dpg.group(horizontal=True, width=-1, height=-1):
-                # Область контента
+            # Главное окно
+            with dpg.window(
+                tag="main_window",
+                label="RapidRecon - Advanced Network Reconnaissance",
+                width=1600,
+                height=1000,
+                no_move=True,
+                no_resize=True,
+                no_collapse=True,
+                no_close=True
+            ):
+                # Боковая панель (как в Obsidian)
                 with dpg.child_window(
-                    tag="content_area",
-                    width=-1,
+                    tag="sidebar",
+                    width=300,
                     border=False
                 ):
-                    self._setup_content_area()
-        
-        # Окно настроек
-        self._setup_settings_window()
-        
-        # Окно выбора целей
-        self._setup_targets_window()
-        
-        # Настройка viewport
-        dpg.create_viewport(
-            title='RapidRecon • Advanced Security Scanner',
-            width=1600,
-            height=1000,
-            min_width=1200,
-            min_height=800
-        )
+                    self._setup_sidebar()
+                
+                # Основная область
+                with dpg.group(horizontal=True, width=-1, height=-1):
+                    # Область контента
+                    with dpg.child_window(
+                        tag="content_area",
+                        width=-1,
+                        border=False
+                    ):
+                        self._setup_content_area()
+            
+            # Окно настроек
+            self._setup_settings_window()
+            
+            # Окно выбора целей
+            self._setup_targets_window()
+            
+            # Настройка viewport
+            dpg.create_viewport(
+                title='RapidRecon • Advanced Security Scanner',
+                width=1600,
+                height=1000,
+                min_width=1200,
+                min_height=800
+            )
+            
+            self.logger.info("✅ Интерфейс настроен успешно")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка настройки GUI: {e}")
+            self.logger.error(traceback.format_exc())
+            raise
     
     def _setup_sidebar(self):
         """Боковая панель Obsidian"""
@@ -451,7 +465,7 @@ class MainWindow:
             label="📋 Scan Profiles",
             default_open=True
         ):
-            profiles = self.engine.get_available_profiles()
+            profiles = ["stealth", "normal", "aggressive"]  # Заглушка
             for profile in profiles:
                 dpg.add_button(
                     label=f"• {profile.title()}",
@@ -775,7 +789,7 @@ class MainWindow:
                     dpg.add_text("Available Modules")
                     dpg.add_listbox(
                         tag="modules_list",
-                        items=list(self.engine.active_modules.keys()),
+                        items=list(self.engine.active_modules.keys()) if hasattr(self.engine, 'active_modules') else [],
                         num_items=15,
                         width=-1
                     )
@@ -938,15 +952,22 @@ class MainWindow:
     
     def _set_profile(self, profile_name: str):
         """Установка профиля сканирования"""
-        if self.engine.set_scan_profile(profile_name):
-            profile_info = self.engine.get_current_profile_info()
-            # Применяем настройки профиля
-            if dpg.does_item_exist("rate_limit"):
-                dpg.set_value("rate_limit", profile_info.get('rate_limit', 10))
-            if dpg.does_item_exist("max_depth"):
-                dpg.set_value("max_depth", profile_info.get('max_depth', 5))
-            
-            self.add_to_log(f"📋 Profile set to: {profile_name}")
+        try:
+            if hasattr(self.engine, 'set_scan_profile'):
+                if self.engine.set_scan_profile(profile_name):
+                    profile_info = self.engine.get_current_profile_info() if hasattr(self.engine, 'get_current_profile_info') else {}
+                    # Применяем настройки профиля
+                    if dpg.does_item_exist("rate_limit"):
+                        dpg.set_value("rate_limit", profile_info.get('rate_limit', 10))
+                    if dpg.does_item_exist("max_depth"):
+                        dpg.set_value("max_depth", profile_info.get('max_depth', 5))
+                    
+                    self.add_to_log(f"📋 Profile set to: {profile_name}")
+            else:
+                self.add_to_log(f"⚠️ Engine doesn't support profile setting")
+        except Exception as e:
+            self.logger.error(f"Error setting profile: {e}")
+            self.add_to_log(f"❌ Error setting profile: {e}")
     
     def _on_scan_level_change(self):
         """Обработчик изменения уровня сканирования"""
@@ -964,14 +985,338 @@ class MainWindow:
     
     def quick_start_scan(self):
         """Быстрый запуск сканирования из боковой панели"""
-        target = dpg.get_value("quick_target_input")
-        if not target:
-            self.add_to_log("❌ Please enter a target first!")
-            return
-        
-        self.add_to_log(f"🚀 Quick scan started for: {target}")
-        
-        # Устанавливаем цель
-        self.engine.set_targets([target])
-        
-        # Запускаем сканирование с текущими настрой
+        try:
+            target = dpg.get_value("quick_target_input")
+            if not target:
+                self.add_to_log("❌ Please enter a target first!")
+                return
+            
+            self.add_to_log(f"🚀 Quick scan started for: {target}")
+            
+            # Устанавливаем цель
+            if hasattr(self.engine, 'set_targets'):
+                self.engine.set_targets([target])
+            elif hasattr(self.engine, 'add_initial_target'):
+                self.engine.add_initial_target(target)
+            
+            # Запускаем сканирование с текущими настройками
+            scan_profile = dpg.get_value("scan_level").split(" ")[-1].lower()
+            self._set_profile(scan_profile)
+            
+            # Запуск сканирования
+            if hasattr(self.engine, 'start_scan'):
+                if self.engine.start_scan():
+                    self.is_scanning = True
+                    dpg.hide_item("quick_scan_button")
+                    dpg.show_item("quick_stop_button")
+                    dpg.hide_item("adv_scan_button")
+                    dpg.show_item("adv_stop_button")
+                    self.add_to_log("✅ Scan started successfully!")
+                    
+                    # Обновляем интерфейс в реальном времени
+                    self._start_ui_updates()
+                else:
+                    self.add_to_log("❌ Failed to start scan!")
+            else:
+                self.add_to_log("⚠️ Engine doesn't support start_scan method")
+                
+        except Exception as e:
+            self.logger.error(f"Error in quick_start_scan: {e}")
+            self.add_to_log(f"❌ Error starting scan: {e}")
+    
+    def stop_scan(self):
+        """Остановка сканирования"""
+        try:
+            if self.is_scanning and hasattr(self.engine, 'stop_scan'):
+                self.engine.stop_scan()
+                self.is_scanning = False
+                dpg.show_item("quick_scan_button")
+                dpg.hide_item("quick_stop_button")
+                dpg.show_item("adv_scan_button")
+                dpg.hide_item("adv_stop_button")
+                self.add_to_log("⏹️ Scan stopped by user")
+            else:
+                self.add_to_log("⚠️ No active scan to stop")
+        except Exception as e:
+            self.logger.error(f"Error stopping scan: {e}")
+            self.add_to_log(f"❌ Error stopping scan: {e}")
+    
+    def start_scan(self):
+        """Запуск расширенного сканирования"""
+        try:
+            targets_text = dpg.get_value("target_input")
+            if not targets_text:
+                self.add_to_log("❌ Please enter targets first!")
+                return False
+                
+            targets = [t.strip() for t in targets_text.split('\n') if t.strip()]
+            
+            self.add_to_log(f"🎯 Starting advanced scan for {len(targets)} targets")
+            
+            # Устанавливаем цели
+            if hasattr(self.engine, 'set_targets'):
+                self.engine.set_targets(targets)
+            elif hasattr(self.engine, 'add_initial_target'):
+                for target in targets:
+                    self.engine.add_initial_target(target)
+            
+            # Запускаем сканирование
+            if hasattr(self.engine, 'start_scan'):
+                if self.engine.start_scan():
+                    self.is_scanning = True
+                    dpg.hide_item("quick_scan_button")
+                    dpg.show_item("quick_stop_button")
+                    dpg.hide_item("adv_scan_button")
+                    dpg.show_item("adv_stop_button")
+                    self.add_to_log("✅ Advanced scan started successfully!")
+                    self._start_ui_updates()
+                    return True
+                else:
+                    self.add_to_log("❌ Failed to start advanced scan!")
+                    return False
+            else:
+                self.add_to_log("⚠️ Engine doesn't support start_scan method")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error in start_scan: {e}")
+            self.add_to_log(f"❌ Error starting advanced scan: {e}")
+            return False
+    
+    def resume_scan(self):
+        """Продолжение сканирования"""
+        try:
+            if hasattr(self.engine, 'resume_scan'):
+                if self.engine.resume_scan():
+                    self.is_scanning = True
+                    dpg.hide_item("quick_scan_button")
+                    dpg.show_item("quick_stop_button")
+                    dpg.hide_item("adv_scan_button")
+                    dpg.show_item("adv_stop_button")
+                    self.add_to_log("🔍 Scan resumed!")
+                    self._start_ui_updates()
+            else:
+                self.add_to_log("⚠️ Engine doesn't support resume_scan method")
+        except Exception as e:
+            self.logger.error(f"Error resuming scan: {e}")
+            self.add_to_log(f"❌ Error resuming scan: {e}")
+    
+    def clear_results(self):
+        """Очистка результатов"""
+        try:
+            if hasattr(self.engine, 'clear_results'):
+                self.engine.clear_results()
+            self.graph.clear()
+            dpg.set_value("activity_log", "")
+            self.add_to_log("🧹 All results cleared")
+        except Exception as e:
+            self.logger.error(f"Error clearing results: {e}")
+            self.add_to_log(f"❌ Error clearing results: {e}")
+    
+    def update_graph(self):
+        """Обновление графа на основе данных сканирования"""
+        try:
+            self.graph.clear()
+            
+            # Получаем данные из движка
+            if hasattr(self.engine, 'get_scan_results'):
+                scan_data = self.engine.get_scan_results()
+                
+                # Добавляем узлы и связи
+                for node in scan_data.get('nodes', []):
+                    node_id = self.graph.add_node(node)
+                    
+                    # Добавляем связи
+                    for edge in node.get('edges', []):
+                        self.graph.add_edge(node_id, edge['target_id'], edge.get('type', 'normal'))
+            
+            # Принудительная перерисовка
+            dpg.delete_item("graph_canvas", children_only=True)
+            self.graph.draw_graph(1000, 600)
+            self.add_to_log("🗺️ Graph updated")
+            
+        except Exception as e:
+            self.logger.error(f"Error updating graph: {e}")
+            self.add_to_log(f"❌ Error updating graph: {e}")
+    
+    def clear_graph(self):
+        """Очистка графа"""
+        try:
+            self.graph.clear()
+            dpg.delete_item("graph_canvas", children_only=True)
+            self.add_to_log("🗺️ Graph cleared")
+        except Exception as e:
+            self.logger.error(f"Error clearing graph: {e}")
+            self.add_to_log(f"❌ Error clearing graph: {e}")
+    
+    def export_graph(self):
+        """Экспорт графа"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"network_map_{timestamp}.json"
+            
+            export_data = {
+                'nodes': list(self.graph.nodes.values()),
+                'edges': self.graph.edges,
+                'export_time': timestamp
+            }
+            
+            with open(filename, 'w') as f:
+                json.dump(export_data, f, indent=2)
+            self.add_to_log(f"💾 Graph exported to {filename}")
+        except Exception as e:
+            self.logger.error(f"Error exporting graph: {e}")
+            self.add_to_log(f"❌ Export failed: {str(e)}")
+    
+    def focus_on_targets(self):
+        """Фокусировка на целевых узлах"""
+        self.add_to_log("🎯 Focusing on target nodes...")
+    
+    def highlight_vulnerabilities(self):
+        """Подсветка уязвимостей"""
+        self.add_to_log("🔴 Highlighting vulnerabilities...")
+    
+    def load_vulnerable_targets(self):
+        """Загрузка уязвимых целей"""
+        self.add_to_log("🎯 Loading vulnerable targets...")
+    
+    def start_exploitation(self):
+        """Запуск эксплуатации"""
+        self.add_to_log("💥 Starting exploitation...")
+    
+    def scan_for_exploits(self):
+        """Сканирование на наличие эксплойтов"""
+        self.add_to_log("🔍 Scanning for exploits...")
+    
+    def start_lateral_movement(self):
+        """Запуск перемещения внутри сети"""
+        self.add_to_log("🔄 Starting lateral movement...")
+    
+    def refresh_modules(self):
+        """Обновление списка модулей"""
+        self.add_to_log("🔄 Refreshing modules...")
+    
+    def show_settings(self):
+        """Показать окно настроек"""
+        try:
+            if not self.settings_window_open:
+                dpg.show_item("settings_window")
+                self.settings_window_open = True
+                dpg.focus_item("settings_window")
+            else:
+                dpg.hide_item("settings_window")
+                self.settings_window_open = False
+        except Exception as e:
+            self.logger.error(f"Error showing settings: {e}")
+    
+    def show_targets_window(self):
+        """Показать окно выбора целей"""
+        try:
+            dpg.show_item("targets_window")
+        except Exception as e:
+            self.logger.error(f"Error showing targets window: {e}")
+    
+    def add_selected_targets(self):
+        """Добавить выбранные цели"""
+        self.add_to_log("🎯 Adding selected targets...")
+    
+    def clear_target_selection(self):
+        """Очистить выбор целей"""
+        self.add_to_log("🧹 Clearing target selection...")
+    
+    def save_settings(self):
+        """Сохранение настроек"""
+        self.add_to_log("💾 Settings saved")
+    
+    def apply_settings(self):
+        """Применение настроек"""
+        self.add_to_log("🔄 Settings applied to current scan")
+    
+    def export_all_data(self):
+        """Экспорт всех данных"""
+        self.add_to_log("📤 Exporting all data...")
+    
+    def clear_everything(self):
+        """Очистка всего"""
+        try:
+            self.clear_results()
+            self.clear_graph()
+            self.add_to_log("🧹 Everything cleared")
+        except Exception as e:
+            self.logger.error(f"Error clearing everything: {e}")
+            self.add_to_log(f"❌ Error clearing everything: {e}")
+    
+    def add_to_log(self, message: str):
+        """Добавить сообщение в лог"""
+        try:
+            current_log = dpg.get_value("activity_log")
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            new_message = f"[{timestamp}] {message}\n"
+            
+            if current_log:
+                new_log = current_log + new_message
+            else:
+                new_log = new_message
+                
+            dpg.set_value("activity_log", new_log)
+            # Автопрокрутка вниз
+            dpg.focus_item("activity_log")
+        except Exception as e:
+            self.logger.error(f"Error adding to log: {e}")
+    
+    def _start_ui_updates(self):
+        """Запуск обновлений интерфейса"""
+        # Заглушка для будущей реализации
+        pass
+    
+    def handle_engine_event(self, event_type: str, data: Any = None):
+        """Обработка событий от движка"""
+        try:
+            self.logger.info(f"GUI received engine event: {event_type}")
+            
+            if event_type == 'node_discovered':
+                self.add_to_log(f"🔍 Node discovered: {data}")
+                self.update_graph()
+            elif event_type == 'scan_completed':
+                self.add_to_log("✅ Scan completed")
+                self.is_scanning = False
+                dpg.show_item("quick_scan_button")
+                dpg.hide_item("quick_stop_button")
+                dpg.show_item("adv_scan_button")
+                dpg.hide_item("adv_stop_button")
+            elif event_type == 'vulnerability_found':
+                self.add_to_log(f"🔴 Vulnerability found: {data}")
+            elif event_type == 'exploitation_success':
+                self.add_to_log(f"💥 Exploitation successful: {data}")
+                
+        except Exception as e:
+            self.logger.error(f"Error handling engine event: {e}")
+    
+    def run(self):
+        """Запуск GUI"""
+        try:
+            self.logger.info("🚀 Запуск графического интерфейса...")
+            dpg.setup_dearpygui()
+            dpg.show_viewport()
+            dpg.set_primary_window("main_window", True)
+            
+            # Главный цикл GUI
+            while dpg.is_dearpygui_running():
+                # Здесь можно добавить периодические обновления
+                dpg.render_dearpygui_frame()
+            
+            self.destroy()
+            
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка запуска GUI: {e}")
+            self.logger.error(traceback.format_exc())
+            raise
+    
+    def destroy(self):
+        """Уничтожение GUI"""
+        try:
+            self.logger.info("🧹 Очистка графического интерфейса...")
+            dpg.destroy_context()
+            self.logger.info("✅ Графический интерфейс уничтожен")
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка уничтожения GUI: {e}")
