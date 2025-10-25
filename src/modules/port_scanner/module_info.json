@@ -1,0 +1,9 @@
+{
+    "name": "port_scanner",
+    "version": "1.0.0", 
+    "description": "Быстрый TCP-сканер портов",
+    "author": "RapidRecon Team",
+    "input_types": ["ip", "active_hosts"],
+    "output_types": ["open_ports", "services"],
+    "triggers": ["service_detection"]
+}
