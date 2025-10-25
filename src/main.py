@@ -7,9 +7,10 @@ import sys
 import os
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Type
 import signal
 import time
+import importlib
 
 # Добавление корневой директории в путь для импортов
 sys.path.insert(0, str(Path(__file__).parent))
@@ -67,7 +68,12 @@ class RapidRecon:
             "modules": {
                 "directory": "src/modules",
                 "auto_load": True,
-                "auto_discover": True
+                "auto_discover": True,
+                "builtin_modules": [
+                    "ping_scanner",
+                    "port_scanner", 
+                    "service_detector"
+                ]
             },
             "gui": {
                 "width": 1400,
@@ -163,10 +169,14 @@ class RapidRecon:
             engine_config = self.config['engine']
             self.engine = PropagationEngine(
                 max_depth=engine_config['max_depth'],
-                max_concurrent_tasks=engine_config['max_concurrent_tasks']
+                max_concurrent_tasks=engine_config['max_concurrent_tasks'],
+                rate_limit=engine_config['rate_limit']
             )
             
-            # Автоматическая загрузка модулей
+            # Регистрация модулей
+            self.register_modules()
+            
+            # Автоматическая загрузка модулей из директории
             if self.config['modules']['auto_load']:
                 load_results = self.module_manager.load_all_modules()
                 loaded_count = sum(1 for result in load_results.values() if result)
@@ -188,6 +198,70 @@ class RapidRecon:
             self.logger.error(f"❌ Ошибка инициализации компонентов: {e}")
             raise
     
+    def register_modules(self):
+        """Регистрация всех модулей в движке"""
+        self.logger.info("🔧 Регистрация модулей...")
+        
+        builtin_modules = self.config['modules'].get('builtin_modules', [])
+        registered_count = 0
+        
+        # Регистрация встроенных модулей
+        for module_name in builtin_modules:
+            try:
+                module_class = self.load_builtin_module(module_name)
+                if module_class:
+                    self.engine.register_module(module_name, module_class)
+                    registered_count += 1
+                    self.logger.info(f"✅ Зарегистрирован встроенный модуль: {module_name}")
+                else:
+                    self.logger.warning(f"⚠️ Не удалось загрузить встроенный модуль: {module_name}")
+            except Exception as e:
+                self.logger.error(f"❌ Ошибка регистрации модуля {module_name}: {e}")
+        
+        self.logger.info(f"📋 Зарегистрировано встроенных модулей: {registered_count}")
+    
+    def load_builtin_module(self, module_name: str) -> Optional[Type]:
+        """
+        Загрузка встроенного модуля по имени
+        
+        Args:
+            module_name: Имя модуля для загрузки
+            
+        Returns:
+            Класс модуля или None если не удалось загрузить
+        """
+        module_paths = {
+            "ping_scanner": "modules.ping_scanner.module.PingScanner",
+            "port_scanner": "modules.port_scanner.module.PortScanner",
+            "service_detector": "modules.service_detector.module.ServiceDetector"
+        }
+        
+        if module_name not in module_paths:
+            self.logger.warning(f"⚠️ Неизвестный встроенный модуль: {module_name}")
+            return None
+        
+        try:
+            module_path = module_paths[module_name]
+            module_parts = module_path.split('.')
+            class_name = module_parts[-1]
+            module_path = '.'.join(module_parts[:-1])
+            
+            # Динамический импорт модуля
+            module = importlib.import_module(module_path)
+            module_class = getattr(module, class_name)
+            
+            return module_class
+            
+        except ImportError as e:
+            self.logger.warning(f"⚠️ Модуль {module_name} не найден: {e}")
+            return None
+        except AttributeError as e:
+            self.logger.warning(f"⚠️ Класс модуля {module_name} не найден: {e}")
+            return None
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка загрузки модуля {module_name}: {e}")
+            return None
+    
     def setup_signal_handlers(self):
         """Настройка обработчиков сигналов для graceful shutdown"""
         def signal_handler(signum, frame):
@@ -206,11 +280,16 @@ class RapidRecon:
             self.event_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.event_loop)
             
-            # Здесь может быть постоянная работа движка
-            # Пока просто запускаем один раз для демонстрации
+            # Постоянная обработка задач
             if self.engine:
-                self.event_loop.run_until_complete(self.engine.process_queue())
-                
+                while self.is_running:
+                    # Проверяем есть ли задачи в очереди
+                    if not self.engine.pending_scans.empty():
+                        self.event_loop.run_until_complete(self.engine.process_queue())
+                    else:
+                        # Ждем новые задачи
+                        time.sleep(0.1)
+                        
         except Exception as e:
             self.logger.error(f"❌ Ошибка в асинхронном движке: {e}")
         finally:
@@ -230,6 +309,12 @@ class RapidRecon:
             app_config = self.config['app']
             self.logger.info(f"📋 Версия: {app_config['version']}")
             self.logger.info(f"🐛 Режим отладки: {app_config['debug']}")
+            
+            # Вывод информации о модулях
+            engine_stats = self.engine.get_statistics()
+            self.logger.info(f"🔧 Активных модулей: {engine_stats.get('active_modules', 0)}")
+            self.logger.info(f"📊 Макс. глубина: {self.engine.max_depth}")
+            self.logger.info(f"⚡ Лимит скорости: {self.engine.rate_limit}/сек")
             
             # Запуск асинхронного движка в отдельном потоке
             self.engine_thread = threading.Thread(
@@ -289,6 +374,12 @@ class RapidRecon:
             self.save_config(self.config)
             self.logger.info("✅ Конфигурация сохранена")
             
+            # Экспорт результатов если есть
+            if self.engine and self.engine.discovered_nodes:
+                results_file = f"rapidrecon_results_{int(time.time())}.json"
+                self.engine.export_results(results_file)
+                self.logger.info(f"💾 Результаты экспортированы в: {results_file}")
+            
             self.logger.info("🎉 RapidRecon завершил работу")
             
         except Exception as e:
@@ -315,7 +406,8 @@ class RapidRecon:
         engine_stats = self.engine.get_statistics() if self.engine else {}
         module_stats = {
             'available_modules': self.module_manager.get_available_modules_count() if self.module_manager else 0,
-            'loaded_modules': self.module_manager.get_loaded_modules_count() if self.module_manager else 0
+            'loaded_modules': self.module_manager.get_loaded_modules_count() if self.module_manager else 0,
+            'builtin_modules': len(self.config['modules'].get('builtin_modules', []))
         }
         
         return {
@@ -325,6 +417,19 @@ class RapidRecon:
             'threads_active': threading.active_count(),
             'uptime': getattr(self, 'start_time', 0)
         }
+    
+    def add_scan_target(self, target: str):
+        """
+        Добавление цели для сканирования
+        
+        Args:
+            target: Цель для сканирования (домен, IP, диапазон)
+        """
+        if self.engine:
+            self.engine.add_initial_target(target)
+            self.logger.info(f"🎯 Добавлена цель для сканирования: {target}")
+        else:
+            self.logger.error("❌ Движок не инициализирован")
 
 
 def main():
