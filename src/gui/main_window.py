@@ -1,5 +1,5 @@
 """
-Главное окно RapidRecon в стиле Obsidian
+Главное окно RapidRecon в стиле Obsidian с полным функционалом
 """
 import dearpygui.dearpygui as dpg
 from typing import Dict, Any, List, Optional
@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 import logging
 import math
+import random
 
 class ObsidianTheme:
     """Тема в стиле Obsidian"""
@@ -80,6 +81,7 @@ class GraphVisualization:
         self.edges = []
         self.node_counter = 0
         self.selected_node = None
+        self.node_positions = {}
     
     def draw_graph(self, width: int, height: int):
         """Отрисовка графа"""
@@ -115,31 +117,40 @@ class GraphVisualization:
             if source and target:
                 dpg.draw_line(
                     source['position'], target['position'],
-                    color=[123, 97, 255, 100],
-                    thickness=2,
+                    color=edge['color'],
+                    thickness=edge['thickness'],
                     parent="graph_canvas"
                 )
         
         # Отрисовка узлов
         for node_id, node in self.nodes.items():
             pos = node['position']
-            color = node['color']
             
             # Основной круг узла
             dpg.draw_circle(
                 pos, node['radius'],
-                fill=color,
-                color=[255, 255, 255, 50] if node_id != self.selected_node else [255, 255, 0, 200],
+                fill=node['color'],
+                color=[255, 255, 255, 100] if node_id != self.selected_node else [255, 255, 0, 200],
                 thickness=3 if node_id == self.selected_node else 2,
                 parent="graph_canvas"
             )
             
-            # Текст метки
+            # Иконка узла
+            icon = node.get('icon', '•')
             dpg.draw_text(
-                [pos[0] - len(node['label']) * 3, pos[1] + node['radius'] + 5],
+                [pos[0] - 4, pos[1] - 6],
+                icon,
+                color=[255, 255, 255],
+                size=14,
+                parent="graph_canvas"
+            )
+            
+            # Текст метки (только при достаточном масштабе)
+            dpg.draw_text(
+                [pos[0] - len(node['label']) * 3, pos[1] + node['radius'] + 8],
                 node['label'],
-                color=[220, 220, 220],
-                size=12,
+                color=[200, 200, 200],
+                size=11,
                 parent="graph_canvas"
             )
     
@@ -148,52 +159,152 @@ class GraphVisualization:
         node_id = self.node_counter
         self.node_counter += 1
         
-        # Цвета узлов по типам (в стиле Obsidian)
-        type_colors = {
-            'initial_target': [72, 199, 116],    # Зеленый
-            'subdomain': [86, 156, 214],         # Синий
-            'active_host': [255, 179, 64],       # Оранжевый
-            'open_ports': [123, 97, 255],        # Фиолетовый
-            'service': [158, 118, 255],          # Лавандовый
-            'vulnerability': [255, 92, 87],      # Красный
-            'exploitation': [255, 92, 87],       # Красный
-            'exploitation_success': [255, 92, 87], # Ярко-красный
-            'internal_scan': [64, 192, 192]      # Бирюзовый
-        }
+        # Определяем тип и настройки узла
+        node_type = node_data.get('type', 'custom')
+        node_config = self._get_node_config(node_type)
         
-        # Позиционирование (простая круговая компоновка)
-        angle = (node_id * 2 * math.pi / max(1, len(self.nodes)))
-        radius = 150 + (len(self.nodes) * 10)
-        center_x, center_y = 400, 300
-        
-        position = [
-            center_x + radius * math.cos(angle),
-            center_y + radius * math.sin(angle)
-        ]
+        # Позиционирование (интеллектуальное)
+        position = self._calculate_node_position(node_id, node_type)
         
         self.nodes[node_id] = {
             'id': node_id,
-            'label': self._truncate_label(node_data.get('data', 'Node')),
-            'type': node_data.get('type', 'custom'),
+            'label': self._truncate_label(node_data.get('data', 'Node'), 12),
+            'type': node_type,
             'data': node_data,
             'position': position,
-            'radius': 20,
-            'color': type_colors.get(node_data.get('type', 'custom'), [128, 128, 128])
+            'radius': node_config['radius'],
+            'color': node_config['color'],
+            'icon': node_config['icon']
         }
         
         return node_id
     
-    def add_edge(self, source_id: int, target_id: int):
+    def _get_node_config(self, node_type: str) -> Dict[str, Any]:
+        """Конфигурация узлов по типам"""
+        configs = {
+            'initial_target': {
+                'color': [72, 199, 116, 200],    # Зеленый
+                'radius': 25,
+                'icon': '🎯'
+            },
+            'subdomain': {
+                'color': [86, 156, 214, 180],    # Синий
+                'radius': 20,
+                'icon': '🌐'
+            },
+            'active_host': {
+                'color': [255, 179, 64, 200],    # Оранжевый
+                'radius': 22,
+                'icon': '💻'
+            },
+            'open_ports': {
+                'color': [123, 97, 255, 180],    # Фиолетовый
+                'radius': 20,
+                'icon': '🔓'
+            },
+            'service': {
+                'color': [158, 118, 255, 180],   # Лавандовый
+                'radius': 18,
+                'icon': '⚙️'
+            },
+            'vulnerability': {
+                'color': [255, 92, 87, 220],     # Красный
+                'radius': 19,
+                'icon': '🔴'
+            },
+            'vulnerability_scan': {
+                'color': [255, 120, 100, 180],   # Светло-красный
+                'radius': 20,
+                'icon': '🔍'
+            },
+            'exploitation': {
+                'color': [255, 60, 60, 220],     # Ярко-красный
+                'radius': 23,
+                'icon': '💥'
+            },
+            'exploitation_success': {
+                'color': [255, 0, 0, 230],       # Очень красный
+                'radius': 28,
+                'icon': '💀'
+            },
+            'internal_scan': {
+                'color': [64, 192, 192, 180],    # Бирюзовый
+                'radius': 24,
+                'icon': '🔍'
+            },
+            'domain_scan': {
+                'color': [100, 180, 255, 180],   # Голубой
+                'radius': 21,
+                'icon': '🌍'
+            }
+        }
+        return configs.get(node_type, {
+            'color': [128, 128, 128, 150],
+            'radius': 20,
+            'icon': '•'
+        })
+    
+    def _calculate_node_position(self, node_id: int, node_type: str) -> List[float]:
+        """Интеллектуальное позиционирование узлов"""
+        center_x, center_y = 500, 350
+        
+        if not self.nodes:
+            return [center_x, center_y]
+        
+        # Группировка по типам
+        type_positions = {
+            'initial_target': [center_x - 200, center_y - 200],
+            'subdomain': [center_x - 150, center_y - 100],
+            'active_host': [center_x, center_y],
+            'open_ports': [center_x + 150, center_y],
+            'service': [center_x + 250, center_y + 50],
+            'vulnerability': [center_x + 100, center_y + 150],
+            'exploitation': [center_x - 100, center_y + 150],
+            'exploitation_success': [center_x - 200, center_y + 200],
+            'internal_scan': [center_x - 300, center_y]
+        }
+        
+        if node_type in type_positions:
+            base_pos = type_positions[node_type]
+            # Добавляем небольшой рандом для узлов одного типа
+            return [
+                base_pos[0] + random.uniform(-30, 30),
+                base_pos[1] + random.uniform(-30, 30)
+            ]
+        
+        # Для неизвестных типов - круговая компоновка
+        angle = (node_id * 2 * math.pi / len(self.nodes))
+        radius = 200 + (len(self.nodes) * 5)
+        return [
+            center_x + radius * math.cos(angle),
+            center_y + radius * math.sin(angle)
+        ]
+    
+    def add_edge(self, source_id: int, target_id: int, edge_type: str = "normal"):
         """Добавить связь"""
         if source_id in self.nodes and target_id in self.nodes:
+            edge_configs = {
+                "normal": {"color": [150, 150, 150, 100], "thickness": 2},
+                "exploitation": {"color": [255, 60, 60, 150], "thickness": 3},
+                "vulnerability": {"color": [255, 100, 100, 120], "thickness": 2},
+                "lateral": {"color": [255, 165, 0, 150], "thickness": 3}
+            }
+            
+            config = edge_configs.get(edge_type, edge_configs["normal"])
+            
             self.edges.append({
                 'source': source_id,
-                'target': target_id
+                'target': target_id,
+                'type': edge_type,
+                'color': config['color'],
+                'thickness': config['thickness']
             })
     
     def _truncate_label(self, label: str, max_length: int = 15) -> str:
         """Обрезать длинные метки"""
-        return label if len(label) <= max_length else label[:max_length-3] + "..."
+        if len(label) <= max_length:
+            return label
+        return label[:max_length-3] + "..."
     
     def clear(self):
         """Очистить граф"""
@@ -204,7 +315,7 @@ class GraphVisualization:
 
 class ObsidianMainWindow:
     """
-    Главный интерфейс RapidRecon в стиле Obsidian
+    Главный интерфейс RapidRecon в стиле Obsidian с полным функционалом
     """
     
     def __init__(self, engine, module_manager):
@@ -214,6 +325,7 @@ class ObsidianMainWindow:
         self.is_scanning = False
         self.logger = logging.getLogger('RapidRecon.GUI')
         self.settings_window_open = False
+        self.selected_targets = set()
         
         # Инициализация GUI
         self.setup_gui()
@@ -229,9 +341,9 @@ class ObsidianMainWindow:
         # Главное окно
         with dpg.window(
             tag="main_window",
-            label="RapidRecon",
-            width=1400,
-            height=900,
+            label="RapidRecon - Advanced Network Reconnaissance",
+            width=1600,
+            height=1000,
             no_move=True,
             no_resize=True,
             no_collapse=True,
@@ -240,7 +352,7 @@ class ObsidianMainWindow:
             # Боковая панель (как в Obsidian)
             with dpg.child_window(
                 tag="sidebar",
-                width=250,
+                width=300,
                 border=False
             ):
                 self._setup_sidebar()
@@ -258,13 +370,16 @@ class ObsidianMainWindow:
         # Окно настроек
         self._setup_settings_window()
         
+        # Окно выбора целей
+        self._setup_targets_window()
+        
         # Настройка viewport
         dpg.create_viewport(
-            title='RapidRecon • Security Reconnaissance',
-            width=1400,
-            height=900,
-            min_width=1000,
-            min_height=700
+            title='RapidRecon • Advanced Security Scanner',
+            width=1600,
+            height=1000,
+            min_width=1200,
+            min_height=800
         )
     
     def _setup_sidebar(self):
@@ -273,70 +388,63 @@ class ObsidianMainWindow:
         with dpg.group():
             dpg.add_spacer(height=20)
             dpg.add_text("RapidRecon", color=[123, 97, 255])
-            dpg.add_text("Security Tool", color=[150, 150, 160])
+            dpg.add_text("Advanced Security Scanner", color=[150, 150, 160])
             dpg.add_separator()
-        
-        # Навигация
-        with dpg.collapsing_header(
-            label="🧭 Navigation",
-            default_open=True,
-            closable=False
-        ):
-            dpg.add_button(
-                label="🎯 Scan Control",
-                width=-1,
-                callback=lambda: self._switch_tab("scan_tab")
-            )
-            dpg.add_button(
-                label="🌐 Network Graph", 
-                width=-1,
-                callback=lambda: self._switch_tab("graph_tab")
-            )
-            dpg.add_button(
-                label="📊 Results",
-                width=-1,
-                callback=lambda: self._switch_tab("results_tab")
-            )
-            dpg.add_button(
-                label="🔧 Modules",
-                width=-1,
-                callback=lambda: self._switch_tab("modules_tab")
-            )
         
         # Быстрый запуск сканирования
         with dpg.collapsing_header(
-            label="⚡ Quick Actions",
+            label="⚡ Quick Launch",
             default_open=True
         ):
-            dpg.add_text("Target:", color=[150, 150, 160])
+            dpg.add_text("Primary Target:", color=[150, 150, 160])
             dpg.add_input_text(
                 tag="quick_target_input",
-                hint="example.com / 192.168.1.1",
+                hint="example.com / 192.168.1.1 / 10.0.0.0/24",
                 width=-1
             )
             
-            dpg.add_text("Scan Level:", color=[150, 150, 160])
+            dpg.add_text("Scan Intensity:", color=[150, 150, 160])
             dpg.add_combo(
                 tag="scan_level",
-                items=["🚀 Stealth", "⚡ Normal", "💥 Aggressive", "🔥 Full Attack"],
+                items=["🚀 Stealth", "⚡ Normal", "💥 Aggressive", "🔥 Full Attack", "💀 Pentest"],
                 default_value="⚡ Normal",
                 width=-1,
                 callback=self._on_scan_level_change
             )
             
             dpg.add_button(
-                label="▶️ Start Scan",
+                label="🎯 Start Reconnaissance",
                 tag="quick_scan_button",
                 width=-1,
                 callback=self.quick_start_scan
             )
             dpg.add_button(
-                label="⏹️ Stop Scan", 
+                label="⏹️ Stop All Scans", 
                 tag="quick_stop_button",
                 width=-1,
                 callback=self.stop_scan,
                 show=False
             )
+            
+            dpg.add_button(
+                label="📋 Select from Discovered",
+                width=-1,
+                callback=self.show_targets_window
+            )
+        
+        # Модули и возможности
+        with dpg.collapsing_header(
+            label="🔧 Capabilities",
+            default_open=True
+        ):
+            dpg.add_text("Available Modules:", color=[150, 150, 160])
+            dpg.add_text("• Ping Scanner", color=[200, 200, 200])
+            dpg.add_text("• Port Scanner", color=[200, 200, 200])
+            dpg.add_text("• Service Detector", color=[200, 200, 200])
+            dpg.add_text("• Subdomain Scanner", color=[200, 200, 200])
+            dpg.add_text("• Vulnerability Scanner", color=[255, 100, 100])
+            dpg.add_text("• Exploitation Engine", color=[255, 60, 60])
+            dpg.add_text("• Lateral Movement", color=[255, 165, 0])
         
         # Профили сканирования
         with dpg.collapsing_header(
@@ -351,88 +459,132 @@ class ObsidianMainWindow:
                     callback=lambda s, d, p=profile: self._set_profile(p)
                 )
         
-        # Статистика
+        # Статистика в реальном времени
         with dpg.collapsing_header(
-            label="📈 Quick Stats",
+            label="📈 Live Statistics",
             default_open=True
         ):
+            dpg.add_text("Network:", color=[150, 150, 160])
             dpg.add_text("Nodes: 0", tag="stat_nodes")
+            dpg.add_text("Services: 0", tag="stat_services")
             dpg.add_text("Targets: 0", tag="stat_targets")
+            
+            dpg.add_text("Security:", color=[150, 150, 160])
             dpg.add_text("Vulnerabilities: 0", tag="stat_vulns")
             dpg.add_text("Exploits: 0", tag="stat_exploits")
+            dpg.add_text("Lateral Moves: 0", tag="stat_lateral")
         
         # Действия
         with dpg.group():
             dpg.add_separator()
             dpg.add_button(
-                label="⚙️ Settings",
+                label="⚙️ Engine Settings",
                 width=-1,
                 callback=self.show_settings
             )
             dpg.add_button(
-                label="📤 Export Data", 
+                label="📤 Export All Data", 
                 width=-1,
-                callback=self.export_results
+                callback=self.export_all_data
+            )
+            dpg.add_button(
+                label="🧹 Clear Everything",
+                width=-1,
+                callback=self.clear_everything
             )
     
     def _setup_content_area(self):
         """Основная область контента"""
         with dpg.tab_bar(tag="main_tabs"):
             # Вкладка сканирования
-            with dpg.tab(label="🎯 Scan", tag="scan_tab"):
+            with dpg.tab(label="🎯 Reconnaissance", tag="scan_tab"):
                 self._setup_scan_tab()
             
             # Вкладка графа
-            with dpg.tab(label="🌐 Graph", tag="graph_tab"):
+            with dpg.tab(label="🌐 Network Map", tag="graph_tab"):
                 self._setup_graph_tab()
             
             # Вкладка результатов
-            with dpg.tab(label="📊 Results", tag="results_tab"):
+            with dpg.tab(label="📊 Results & Analysis", tag="results_tab"):
                 self._setup_results_tab()
             
+            # Вкладка эксплуатации
+            with dpg.tab(label="💥 Exploitation", tag="exploit_tab"):
+                self._setup_exploit_tab()
+            
             # Вкладка модулей
-            with dpg.tab(label="🔧 Modules", tag="modules_tab"):
+            with dpg.tab(label="🔧 Modules & Tools", tag="modules_tab"):
                 self._setup_modules_tab()
     
     def _setup_scan_tab(self):
         """Вкладка управления сканированием"""
-        # Основная панель сканирования
         with dpg.group():
-            dpg.add_text("Advanced Scan Configuration", color=[123, 97, 255])
+            dpg.add_text("Advanced Reconnaissance Configuration", color=[123, 97, 255])
             
-            with dpg.group(horizontal=True):
-                with dpg.child_window(width=400):
-                    dpg.add_text("Target Configuration")
-                    dpg.add_input_text(
-                        tag="target_input",
-                        hint="Enter domain, IP or range...",
-                        width=-1
-                    )
+            # Конфигурация целей
+            with dpg.collapsing_header(label="🎯 Target Configuration", default_open=True):
+                with dpg.group(horizontal=True):
+                    with dpg.child_window(width=400):
+                        dpg.add_text("Primary Targets")
+                        dpg.add_input_text(
+                            tag="target_input",
+                            hint="Enter domains, IPs or ranges...",
+                            width=-1,
+                            height=60,
+                            multiline=True
+                        )
+                        
+                        dpg.add_text("Scan Scope")
+                        dpg.add_combo(
+                            tag="scan_scope",
+                            items=["Full Infrastructure", "External Recon", "Internal Network", "Web Applications", "Critical Assets"],
+                            default_value="Full Infrastructure",
+                            width=-1
+                        )
                     
-                    dpg.add_text("Scan Type")
-                    dpg.add_combo(
-                        tag="scan_type",
-                        items=["Full Reconnaissance", "Subdomain Discovery", "Port Scanning", "Vulnerability Assessment"],
-                        default_value="Full Reconnaissance",
-                        width=-1
-                    )
-                
-                with dpg.child_window(width=400):
-                    dpg.add_text("Performance Settings")
-                    dpg.add_slider_int(
-                        label="Threads",
-                        tag="thread_count",
-                        default_value=10,
-                        min_value=1,
-                        max_value=50
-                    )
-                    dpg.add_slider_int(
-                        label="Timeout (seconds)",
-                        tag="timeout_setting",
-                        default_value=5,
-                        min_value=1,
-                        max_value=30
-                    )
+                    with dpg.child_window(width=400):
+                        dpg.add_text("Module Selection")
+                        dpg.add_checkbox(tag="mod_ping", label="Ping Scanner", default_value=True)
+                        dpg.add_checkbox(tag="mod_ports", label="Port Scanner", default_value=True)
+                        dpg.add_checkbox(tag="mod_services", label="Service Detection", default_value=True)
+                        dpg.add_checkbox(tag="mod_subdomains", label="Subdomain Discovery", default_value=True)
+                        dpg.add_checkbox(tag="mod_vulns", label="Vulnerability Scanning", default_value=True)
+                        dpg.add_checkbox(tag="mod_exploit", label="Exploitation Engine", default_value=False)
+            
+            # Настройки производительности
+            with dpg.collapsing_header(label="⚡ Performance Settings"):
+                with dpg.group(horizontal=True):
+                    with dpg.child_window(width=300):
+                        dpg.add_slider_int(
+                            label="Scan Threads",
+                            tag="thread_count",
+                            default_value=15,
+                            min_value=1,
+                            max_value=50
+                        )
+                        dpg.add_slider_int(
+                            label="Rate Limit (req/sec)",
+                            tag="rate_limit",
+                            default_value=10,
+                            min_value=1,
+                            max_value=100
+                        )
+                    
+                    with dpg.child_window(width=300):
+                        dpg.add_slider_int(
+                            label="Max Depth",
+                            tag="max_depth",
+                            default_value=5,
+                            min_value=1,
+                            max_value=10
+                        )
+                        dpg.add_slider_int(
+                            label="Timeout (seconds)",
+                            tag="timeout_setting",
+                            default_value=5,
+                            min_value=1,
+                            max_value=30
+                        )
             
             # Кнопки управления
             with dpg.group(horizontal=True):
@@ -446,6 +598,10 @@ class ObsidianMainWindow:
                     tag="adv_stop_button",
                     callback=self.stop_scan,
                     show=False
+                )
+                dpg.add_button(
+                    label="🔍 Resume Scan",
+                    callback=self.resume_scan
                 )
                 dpg.add_button(
                     label="🧹 Clear Results",
@@ -467,22 +623,27 @@ class ObsidianMainWindow:
         with dpg.group():
             # Панель управления графом
             with dpg.group(horizontal=True):
-                dpg.add_button(label="🔄 Refresh Graph", callback=self.update_graph)
-                dpg.add_button(label="🧹 Clear Graph", callback=self.clear_graph)
-                dpg.add_button(label="💾 Export Graph", callback=self.export_graph)
-                dpg.add_text("Zoom:")
-                dpg.add_slider_float(
-                    tag="graph_zoom",
-                    default_value=1.0,
-                    min_value=0.5,
-                    max_value=2.0,
-                    width=100
-                )
+                dpg.add_button(label="🔄 Refresh Map", callback=self.update_graph)
+                dpg.add_button(label="🧹 Clear Map", callback=self.clear_graph)
+                dpg.add_button(label="💾 Export Map", callback=self.export_graph)
+                dpg.add_button(label="🎯 Focus on Targets", callback=self.focus_on_targets)
+                dpg.add_button(label="🔴 Show Vulnerabilities", callback=self.highlight_vulnerabilities)
+            
+            # Легенда графа
+            with dpg.collapsing_header(label="🎨 Map Legend", default_open=False):
+                with dpg.group(horizontal=True):
+                    dpg.add_text("🎯 Initial Target")
+                    dpg.add_text("🌐 Subdomain") 
+                    dpg.add_text("💻 Active Host")
+                    dpg.add_text("🔓 Open Ports")
+                    dpg.add_text("🔴 Vulnerability")
+                    dpg.add_text("💥 Exploitation")
+                    dpg.add_text("💀 Success")
             
             # Область графа
             with dpg.child_window(
                 tag="graph_container",
-                height=600,
+                height=650,
                 border=True
             ):
                 with dpg.drawlist(
@@ -497,54 +658,161 @@ class ObsidianMainWindow:
         """Вкладка результатов"""
         with dpg.group(horizontal=True):
             # Дерево узлов
-            with dpg.child_window(width=400):
-                dpg.add_text("Discovered Nodes")
+            with dpg.child_window(width=450):
+                dpg.add_text("Discovered Infrastructure")
                 dpg.add_tree_node(
                     tag="nodes_tree",
-                    label="Network Structure",
+                    label="Network Topology",
                     default_open=True
                 )
             
-            # Детальная информация
+            # Детальная информация и уязвимости
             with dpg.child_window():
-                dpg.add_text("Node Details")
-                dpg.add_input_text(
-                    tag="node_details",
-                    multiline=True,
-                    height=400,
-                    readonly=True,
-                    width=-1
+                with dpg.tab_bar():
+                    # Детали узла
+                    with dpg.tab(label="Node Details"):
+                        dpg.add_input_text(
+                            tag="node_details",
+                            multiline=True,
+                            height=400,
+                            readonly=True,
+                            width=-1
+                        )
+                    
+                    # Уязвимости
+                    with dpg.tab(label="Vulnerabilities"):
+                        dpg.add_listbox(
+                            tag="vulnerabilities_list",
+                            items=[],
+                            num_items=10,
+                            width=-1
+                        )
+                        dpg.add_input_text(
+                            tag="vuln_details",
+                            multiline=True,
+                            height=200,
+                            readonly=True,
+                            width=-1
+                        )
+                    
+                    # Эксплуатация
+                    with dpg.tab(label="Exploitation Results"):
+                        dpg.add_input_text(
+                            tag="exploit_results",
+                            multiline=True,
+                            height=400,
+                            readonly=True,
+                            width=-1
+                        )
+    
+    def _setup_exploit_tab(self):
+        """Вкладка эксплуатации"""
+        with dpg.group():
+            dpg.add_text("Advanced Exploitation Engine", color=[255, 60, 60])
+            
+            with dpg.group(horizontal=True):
+                with dpg.child_window(width=400):
+                    dpg.add_text("Target Selection")
+                    dpg.add_listbox(
+                        tag="exploit_targets",
+                        items=[],
+                        num_items=8,
+                        width=-1
+                    )
+                    dpg.add_button(
+                        label="🎯 Load Vulnerable Targets",
+                        callback=self.load_vulnerable_targets
+                    )
+                
+                with dpg.child_window(width=400):
+                    dpg.add_text("Exploitation Options")
+                    dpg.add_checkbox(tag="auto_exploit", label="Auto-Exploit Vulnerabilities", default_value=False)
+                    dpg.add_checkbox(tag="lateral_movement", label="Enable Lateral Movement", default_value=True)
+                    dpg.add_checkbox(tag="persistence", label="Establish Persistence", default_value=False)
+                    
+                    dpg.add_text("Payload Type")
+                    dpg.add_combo(
+                        tag="payload_type",
+                        items=["Reverse Shell", "Web Shell", "Meterpreter", "Custom"],
+                        default_value="Reverse Shell",
+                        width=-1
+                    )
+            
+            # Кнопки эксплуатации
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="💥 Start Exploitation",
+                    callback=self.start_exploitation,
+                    color=[255, 60, 60]
                 )
+                dpg.add_button(
+                    label="🔍 Scan for Exploits",
+                    callback=self.scan_for_exploits
+                )
+                dpg.add_button(
+                    label="🔄 Lateral Movement",
+                    callback=self.start_lateral_movement
+                )
+            
+            # Результаты эксплуатации
+            dpg.add_text("Exploitation Results")
+            dpg.add_input_text(
+                tag="exploitation_log",
+                multiline=True,
+                height=300,
+                readonly=True,
+                width=-1
+            )
     
     def _setup_modules_tab(self):
         """Вкладка модулей"""
         with dpg.group():
-            dpg.add_text("Available Modules")
-            dpg.add_listbox(
-                tag="modules_list",
-                items=list(self.engine.active_modules.keys()),
-                num_items=15,
-                width=-1
-            )
+            dpg.add_text("Security Modules & Tools", color=[123, 97, 255])
             
-            dpg.add_text("Module Information", tag="module_info_title")
-            dpg.add_input_text(
-                tag="module_info",
-                multiline=True,
-                height=200,
-                readonly=True,
-                width=-1
-            )
+            with dpg.group(horizontal=True):
+                # Список модулей
+                with dpg.child_window(width=400):
+                    dpg.add_text("Available Modules")
+                    dpg.add_listbox(
+                        tag="modules_list",
+                        items=list(self.engine.active_modules.keys()),
+                        num_items=15,
+                        width=-1
+                    )
+                    dpg.add_button(
+                        label="🔄 Refresh Modules",
+                        callback=self.refresh_modules
+                    )
+                
+                # Информация о модуле
+                with dpg.child_window():
+                    dpg.add_text("Module Information", tag="module_info_title")
+                    dpg.add_input_text(
+                        tag="module_info",
+                        multiline=True,
+                        height=200,
+                        readonly=True,
+                        width=-1
+                    )
+            
+            # Инструменты
+            with dpg.collapsing_header(label="🛠️ Additional Tools"):
+                with dpg.group(horizontal=True):
+                    dpg.add_button(label="🌐 WHOIS Lookup", width=120)
+                    dpg.add_button(label="🔍 DNS Enumeration", width=120)
+                    dpg.add_button(label="📧 Email Harvesting", width=120)
+                    dpg.add_button(label="🔑 SSL Scanner", width=120)
+                    dpg.add_button(label="🌍 GeoIP Lookup", width=120)
     
     def _setup_settings_window(self):
         """Окно настроек"""
         with dpg.window(
             tag="settings_window",
-            label="Settings",
-            width=600,
-            height=500,
+            label="Engine Settings",
+            width=700,
+            height=600,
             show=False,
-            pos=[100, 100]
+            pos=[200, 100]
         ):
             with dpg.tab_bar():
                 # Вкладка общего
@@ -569,11 +837,11 @@ class ObsidianMainWindow:
                 
                 # Вкладка сканирования
                 with dpg.tab(label="Scanning"):
-                    dpg.add_text("Scanning Settings")
+                    dpg.add_text("Scanning Engine Settings")
                     dpg.add_slider_int(
                         tag="settings_default_threads",
                         label="Default Threads",
-                        default_value=10,
+                        default_value=15,
                         min_value=1,
                         max_value=100
                     )
@@ -584,23 +852,35 @@ class ObsidianMainWindow:
                         min_value=1,
                         max_value=30
                     )
+                    dpg.add_slider_int(
+                        tag="settings_max_depth",
+                        label="Maximum Depth",
+                        default_value=5,
+                        min_value=1,
+                        max_value=10
+                    )
                     dpg.add_checkbox(
                         tag="settings_follow_redirects",
                         label="Follow Redirects",
                         default_value=True
                     )
                 
-                # Вкладка модулей
-                with dpg.tab(label="Modules"):
-                    dpg.add_text("Module Settings")
+                # Вкладка безопасности
+                with dpg.tab(label="Security"):
+                    dpg.add_text("Security Settings")
                     dpg.add_checkbox(
-                        tag="settings_auto_load",
-                        label="Auto-load modules",
+                        tag="settings_auto_exploit",
+                        label="Auto-Exploit Critical Vulnerabilities",
+                        default_value=False
+                    )
+                    dpg.add_checkbox(
+                        tag="settings_enable_lateral",
+                        label="Enable Lateral Movement",
                         default_value=True
                     )
                     dpg.add_checkbox(
-                        tag="settings_auto_update",
-                        label="Auto-update modules",
+                        tag="settings_stealth_mode",
+                        label="Stealth Mode",
                         default_value=False
                     )
             
@@ -611,8 +891,45 @@ class ObsidianMainWindow:
                     callback=self.save_settings
                 )
                 dpg.add_button(
+                    label="🔄 Apply to Current Scan",
+                    callback=self.apply_settings
+                )
+                dpg.add_button(
                     label="❌ Close",
                     callback=lambda: dpg.hide_item("settings_window")
+                )
+    
+    def _setup_targets_window(self):
+        """Окно выбора целей"""
+        with dpg.window(
+            tag="targets_window",
+            label="Select Targets from Discovered Nodes",
+            width=800,
+            height=600,
+            show=False,
+            pos=[300, 150]
+        ):
+            dpg.add_text("Discovered Targets (Select multiple with CTRL+Click)")
+            dpg.add_listbox(
+                tag="discovered_targets_list",
+                items=[],
+                num_items=15,
+                width=-1,
+                height=400
+            )
+            
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="🎯 Add Selected Targets",
+                    callback=self.add_selected_targets
+                )
+                dpg.add_button(
+                    label="🧹 Clear Selection",
+                    callback=self.clear_target_selection
+                )
+                dpg.add_button(
+                    label="❌ Close",
+                    callback=lambda: dpg.hide_item("targets_window")
                 )
     
     def _switch_tab(self, tab_name: str):
@@ -622,6 +939,13 @@ class ObsidianMainWindow:
     def _set_profile(self, profile_name: str):
         """Установка профиля сканирования"""
         if self.engine.set_scan_profile(profile_name):
+            profile_info = self.engine.get_current_profile_info()
+            # Применяем настройки профиля
+            if dpg.does_item_exist("rate_limit"):
+                dpg.set_value("rate_limit", profile_info.get('rate_limit', 10))
+            if dpg.does_item_exist("max_depth"):
+                dpg.set_value("max_depth", profile_info.get('max_depth', 5))
+            
             self.add_to_log(f"📋 Profile set to: {profile_name}")
     
     def _on_scan_level_change(self):
@@ -631,190 +955,12 @@ class ObsidianMainWindow:
             "🚀 Stealth": "stealth",
             "⚡ Normal": "normal", 
             "💥 Aggressive": "aggressive",
-            "🔥 Full Attack": "aggressive"
+            "🔥 Full Attack": "aggressive",
+            "💀 Pentest": "aggressive"
         }
         profile = level_map.get(scan_level, "normal")
         self._set_profile(profile)
-        self.add_to_log(f"🎛️ Scan level: {scan_level}")
+        self.add_to_log(f"🎛️ Scan intensity: {scan_level}")
     
     def quick_start_scan(self):
-        """Быстрый запуск сканирования из боковой панели"""
-        target = dpg.get_value("quick_target_input")
-        if not target:
-            self.add_to_log("❌ Please enter a target in the sidebar")
-            return
-        
-        # Устанавливаем уровень сканирования
-        self._on_scan_level_change()
-        
-        self.start_scan_with_target(target)
-    
-    def start_scan_with_target(self, target: str):
-        """Запуск сканирования с указанной целью"""
-        self.is_scanning = True
-        self._update_ui_state()
-        
-        # Применяем настройки
-        self.engine.rate_limit = dpg.get_value("rate_limit") if dpg.does_item_exist("rate_limit") else 10
-        self.engine.max_depth = dpg.get_value("max_depth") if dpg.does_item_exist("max_depth") else 5
-        
-        # Запускаем сканирование
-        self.engine.add_initial_target(target)
-        
-        self.add_to_log(f"🚀 Started scanning: {target}")
-        dpg.set_value("status_text", "Status: Scanning...")
-    
-    def start_scan(self):
-        """Запуск сканирования из основной вкладки"""
-        target = dpg.get_value("target_input")
-        if not target:
-            self.add_to_log("❌ Please enter a target")
-            return
-        
-        self.start_scan_with_target(target)
-    
-    def stop_scan(self):
-        """Остановка сканирования"""
-        self.engine.stop_engine()
-        self.is_scanning = False
-        self._update_ui_state()
-        dpg.set_value("status_text", "Status: Stopped")
-        self.add_to_log("⏹️ Scan stopped")
-    
-    def _update_ui_state(self):
-        """Обновление состояния UI"""
-        # Боковая панель
-        dpg.configure_item("quick_scan_button", show=not self.is_scanning)
-        dpg.configure_item("quick_stop_button", show=self.is_scanning)
-        
-        # Основная вкладка
-        if dpg.does_item_exist("adv_scan_button"):
-            dpg.configure_item("adv_scan_button", show=not self.is_scanning)
-        if dpg.does_item_exist("adv_stop_button"):
-            dpg.configure_item("adv_stop_button", show=self.is_scanning)
-    
-    def show_settings(self):
-        """Показать окно настроек"""
-        dpg.show_item("settings_window")
-        dpg.bring_item_to_front("settings_window")
-    
-    def save_settings(self):
-        """Сохранение настроек"""
-        self.add_to_log("⚙️ Settings saved")
-        dpg.hide_item("settings_window")
-    
-    def clear_results(self):
-        """Очистка результатов"""
-        self.graph.clear()
-        dpg.delete_item("graph_canvas", children_only=True)
-        dpg.set_value("activity_log", "")
-        dpg.set_value("node_details", "")
-        self.add_to_log("🧹 Results cleared")
-    
-    def add_to_log(self, message: str):
-        """Добавление сообщения в лог"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        log_entry = f"[{timestamp}] {message}\n"
-        
-        current_log = dpg.get_value("activity_log")
-        new_log = log_entry + (current_log or "")
-        dpg.set_value("activity_log", new_log)
-    
-    def update_graph(self):
-        """Обновление графа"""
-        self.graph.clear()
-        
-        # Добавляем узлы из движка
-        node_map = {}
-        for node in self.engine.discovered_nodes:
-            node_id = self.graph.add_node({
-                'type': node.type.value,
-                'data': node.data,
-                'depth': node.depth
-            })
-            node_map[node.node_id] = node_id
-        
-        # Добавляем связи
-        for node in self.engine.discovered_nodes:
-            if node.source and node.source in node_map:
-                self.graph.add_edge(
-                    node_map[node.source],
-                    node_map[node.node_id]
-                )
-        
-        # Перерисовываем граф
-        dpg.delete_item("graph_canvas", children_only=True)
-        self.graph.draw_graph(800, 600)
-    
-    def clear_graph(self):
-        """Очистка графа"""
-        self.graph.clear()
-        dpg.delete_item("graph_canvas", children_only=True)
-        self.add_to_log("🧹 Graph cleared")
-    
-    def export_results(self):
-        """Экспорт результатов"""
-        filename = f"rapidrecon_export_{int(time.time())}.json"
-        self.engine.export_results(filename)
-        self.add_to_log(f"💾 Results exported to: {filename}")
-    
-    def export_graph(self):
-        """Экспорт графа"""
-        graph_data = {
-            'nodes': list(self.graph.nodes.values()),
-            'edges': self.graph.edges
-        }
-        filename = f"rapidrecon_graph_{int(time.time())}.json"
-        with open(filename, 'w') as f:
-            json.dump(graph_data, f, indent=2)
-        self.add_to_log(f"🌐 Graph exported to: {filename}")
-    
-    def handle_engine_event(self, event_type: str, data: Any = None):
-        """Обработчик событий движка"""
-        try:
-            if event_type in ['node_discovered', 'node_added']:
-                node_data = data.data if data else 'Unknown'
-                self.add_to_log(f"🔍 Discovered: {node_data}")
-                self.update_graph()
-            elif event_type == 'scan_completed':
-                self.add_to_log("✅ Scan completed")
-                self.is_scanning = False
-                self._update_ui_state()
-                if dpg.does_item_exist("status_text"):
-                    dpg.set_value("status_text", "Status: Completed")
-            elif event_type == 'vulnerability_found':
-                self.add_to_log(f"🔴 Vulnerability: {data.get('cve', 'Unknown')}")
-            elif event_type == 'exploitation_success':
-                self.add_to_log(f"💥 Exploitation success: {data.get('access_type', 'Unknown')}")
-            
-            # Обновляем статистику
-            self._update_statistics()
-            
-        except Exception as e:
-            self.logger.error(f"Error handling engine event: {e}")
-    
-    def _update_statistics(self):
-        """Обновление статистики"""
-        stats = self.engine.get_statistics()
-        dpg.set_value("stat_nodes", f"Nodes: {stats.get('discovered_nodes', 0)}")
-        dpg.set_value("stat_targets", f"Targets: {stats.get('total_scans', 0)}")
-        dpg.set_value("stat_vulns", f"Vulnerabilities: {stats.get('vulnerabilities_found', 0)}")
-        dpg.set_value("stat_exploits", f"Exploits: {stats.get('exploits_successful', 0)}")
-    
-    def run(self):
-        """Запуск GUI"""
-        dpg.setup_dearpygui()
-        dpg.show_viewport()
-        dpg.set_primary_window("main_window", True)
-        
-        # Главный цикл
-        while dpg.is_dearpygui_running():
-            # Периодическое обновление статистики
-            if self.is_scanning:
-                self._update_statistics()
-            dpg.render_dearpygui_frame()
-        
-        dpg.destroy_context()
-
-# Сохраняем как основной MainWindow для совместимости
-MainWindow = ObsidianMainWindow
+        """Быстрый запуск сканирования из боковой
