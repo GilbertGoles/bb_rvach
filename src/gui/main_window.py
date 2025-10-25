@@ -74,6 +74,19 @@ class ObsidianTheme:
         
         return obsidian_theme
 
+class DangerTheme:
+    """Тема для опасных кнопок (красная)"""
+    
+    @staticmethod
+    def setup_theme():
+        with dpg.theme() as danger_theme:
+            with dpg.theme_component(dpg.mvButton):
+                dpg.add_theme_color(dpg.mvThemeCol_Button, [255, 60, 60, 200])
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, [255, 80, 80, 255])
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, [255, 40, 40, 255])
+                dpg.add_theme_color(dpg.mvThemeCol_Text, [255, 255, 255])
+        return danger_theme
+
 class GraphVisualization:
     """Визуализация графа в стиле Obsidian"""
     
@@ -333,9 +346,10 @@ class MainWindow:
         # Инициализация GUI
         self.setup_gui()
         
-        # Применение темы
-        self.theme = ObsidianTheme.setup_theme()
-        dpg.bind_theme(self.theme)
+        # Применение тем
+        self.obsidian_theme = ObsidianTheme.setup_theme()
+        self.danger_theme = DangerTheme.setup_theme()
+        dpg.bind_theme(self.obsidian_theme)
         
         self.logger.info("✅ Графический интерфейс инициализирован")
     
@@ -754,11 +768,12 @@ class MainWindow:
             
             # Кнопки эксплуатации
             with dpg.group(horizontal=True):
-                dpg.add_button(
+                exploit_button = dpg.add_button(
                     label="💥 Start Exploitation",
-                    callback=self.start_exploitation,
-                    color=[255, 60, 60]
+                    callback=self.start_exploitation
                 )
+                dpg.bind_item_theme(exploit_button, self.danger_theme)
+                
                 dpg.add_button(
                     label="🔍 Scan for Exploits",
                     callback=self.scan_for_exploits
