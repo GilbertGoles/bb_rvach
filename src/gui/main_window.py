@@ -424,12 +424,14 @@ class MainWindow:
         
         self.logger.info("🎨 Инициализация графического интерфейса...")
         
+        # Сначала создаем темы
+        self.obsidian_theme = ObsidianTheme.setup_theme()
+        self.danger_theme = DangerTheme.setup_theme()
+        
         # Инициализация GUI
         self.setup_gui()
         
-        # Применение тем
-        self.obsidian_theme = ObsidianTheme.setup_theme()
-        self.danger_theme = DangerTheme.setup_theme()
+        # Применяем тему
         dpg.bind_theme(self.obsidian_theme)
         
         self.logger.info("✅ Графический интерфейс инициализирован")
