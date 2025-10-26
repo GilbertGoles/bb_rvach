@@ -190,25 +190,22 @@ class RapidRecon:
     def start_engine_async(self):
         """Запуск асинхронного движка в отдельном потоке"""
         try:
-            self.logger.info("🔧 Запуск асинхронного движка...")
+            self.logger.info("Запуск асинхронного движка...")
             
             # Создание нового event loop для потока
             self.event_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.event_loop)
             
-            # Постоянная обработка задач
-            while self.is_running:
-                if self.engine and not self.engine.pending_scans.empty():
-                    try:
-                        self.event_loop.run_until_complete(self.engine.process_queue())
-                    except Exception as e:
-                        self.logger.error(f"Ошибка обработки очереди: {e}")
-                else:
-                    # Короткая пауза если нет задач
-                    time.sleep(0.1)
-                        
+            # ЗАПУСКАЕМ ДВИЖОК ОДИН РАЗ, а не в цикле
+            try:
+                self.logger.info("Запускаем engine.process_queue()...")
+                self.event_loop.run_until_complete(self.engine.process_queue())
+                self.logger.info("engine.process_queue() завершен")
+            except Exception as e:
+                self.logger.error(f"Ошибка обработки очереди: {e}")
+                            
         except Exception as e:
-            self.logger.error(f"❌ Ошибка в асинхронном движке: {e}")
+            self.logger.error(f"Ошибка в асинхронном движке: {e}")
         finally:
             if self.event_loop:
                 self.event_loop.close()
