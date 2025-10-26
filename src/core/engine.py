@@ -318,6 +318,11 @@ class PropagationEngine:
         self.is_running = True
         self.logger.info("Запуск обработки очереди задач...")
         
+        # ДОБАВЛЕННЫЙ ЛОГ ДЛЯ ПРОВЕРКИ
+        self.logger.info(f"Размер очереди: {self.pending_scans.qsize()}")
+        self.logger.info(f"Максимальная глубина: {self.max_depth}")
+        self.logger.info(f"Активные модули: {list(self.active_modules.keys())}")
+        
         # Уведомляем GUI о начале сканирования
         self._notify_gui_update('scan_started')
         
